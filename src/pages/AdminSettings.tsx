@@ -24,7 +24,7 @@ const BrandManagement = lazy(() => import('@/components/Admin/BrandManagement').
 const ErrorLogViewer = lazy(() => import('@/components/Admin/ErrorLogViewer').then(m => ({ default: m.ErrorLogViewer })))
 const ErrorStatsDashboard = lazy(() => import('@/components/Admin/ErrorStatsDashboard').then(m => ({ default: m.ErrorStatsDashboard })))
 const RealtimeErrorMonitor = lazy(() => import('@/components/Admin/RealtimeErrorMonitor').then(m => ({ default: m.RealtimeErrorMonitor })))
-const DataExport = lazy(() => import('@/components/Data/DataExport').then(m => ({ default: m.DataExport })))
+const DataExport = lazy(() => import('@/components/data/DataExport').then(m => ({ default: m.DataExport })))
 const StoreHolidayManagement = lazy(() => import('@/components/Stores/StoreHolidayManagement').then(m => ({ default: m.StoreHolidayManagement })))
 const AdminActivityLogViewer = lazy(() => import('@/components/Admin/AdminActivityLogViewer').then(m => ({ default: m.AdminActivityLogViewer })))
 const SystemHealthDashboard = lazy(() => import('@/components/system/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
