@@ -4,10 +4,10 @@ import { MetricCard } from '@/components/ui/MetricCard'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCurrency, formatPercent } from '@/lib/format'
 
-const SalesChart = lazy(() => import('@/components/charts/SalesChart').then(m => ({ default: m.SalesChart })))
-const ExpensePie = lazy(() => import('@/components/charts/ExpensePie').then(m => ({ default: m.ExpensePie })))
-const CalendarHeatmap = lazy(() => import('@/components/charts/CalendarHeatmap').then(m => ({ default: m.CalendarHeatmap })))
-const ProfitWaterfall = lazy(() => import('@/components/charts/ProfitWaterfall').then(m => ({ default: m.ProfitWaterfall })))
+const SalesChart = lazy(() => import('@/components/Charts/SalesChart').then(m => ({ default: m.SalesChart })))
+const ExpensePie = lazy(() => import('@/components/Charts/ExpensePie').then(m => ({ default: m.ExpensePie })))
+const CalendarHeatmap = lazy(() => import('@/components/Charts/CalendarHeatmap').then(m => ({ default: m.CalendarHeatmap })))
+const ProfitWaterfall = lazy(() => import('@/components/Charts/ProfitWaterfall').then(m => ({ default: m.ProfitWaterfall })))
 const AlertsPanel = lazy(() => import('@/components/alerts/AlertsPanel').then(m => ({ default: m.AlertsPanel })))
 const DataTable = lazy(() => import('@/components/data/DataTable').then(m => ({ default: m.DataTable })))
 const VendorPurchaseBreakdown = lazy(() => import('@/components/Dashboard/VendorPurchaseBreakdown').then(m => ({ default: m.VendorPurchaseBreakdown })))
