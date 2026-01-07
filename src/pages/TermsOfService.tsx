@@ -31,7 +31,7 @@ export const TermsOfService: React.FC = () => {
             <section className="mb-8">
               <h2 className="text-xl font-bold text-slate-900 mb-4">第1条（適用）</h2>
               <p className="text-slate-700 leading-relaxed mb-3">
-                本利用規約（以下「本規約」といいます）は、当社が提供する「AI経営管理システム」（以下「本サービス」といいます）の利用条件を定めるものです。
+                本利用規約（以下「本規約」といいます）は、当社が提供する「FoodValue for 経営分析」（以下「本サービス」といいます）の利用条件を定めるものです。
               </p>
               <p className="text-slate-700 leading-relaxed">
                 ユーザーの皆様（以下「ユーザー」といいます）には、本規約に従って本サービスをご利用いただきます。

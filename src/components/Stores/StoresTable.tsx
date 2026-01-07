@@ -26,6 +26,12 @@ interface StoreWithDetails extends Store {
     email: string;
     role: string;
   } | null;
+  brand?: {
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+  } | null;
   reportCount?: number;
   lastReportDate?: string;
   isAssigned?: boolean;
@@ -37,18 +43,20 @@ interface StoresTableProps {
   onDelete?: (storeId: string, storeName: string) => void;
   onView?: (store: StoreWithDetails) => void;
   onAssignUser?: (storeId: string) => void;
+  onHolidaySetting?: (store: StoreWithDetails) => void;
   loading?: boolean;
 }
 
 type SortField = 'name' | 'created_at' | 'reportCount' | 'lastReportDate';
 type SortOrder = 'asc' | 'desc';
 
-export const StoresTable: React.FC<StoresTableProps> = ({ 
-  stores, 
-  onEdit, 
-  onDelete, 
+export const StoresTable: React.FC<StoresTableProps> = ({
+  stores,
+  onEdit,
+  onDelete,
   onView,
   onAssignUser,
+  onHolidaySetting,
   loading = false
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -178,11 +186,11 @@ export const StoresTable: React.FC<StoresTableProps> = ({
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       {/* ヘッダーとフィルタ */}
-      <div className="px-6 py-4 border-b border-gray-200">
+      <div className="px-3 sm:px-6 py-4 border-b border-gray-200">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">店舗一覧</h3>
-            <p className="text-sm text-gray-500">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900">店舗一覧</h3>
+            <p className="text-xs sm:text-sm text-gray-500">
               {filteredStores.length}件中 {sortedStores.length}件を表示
               {selectedStores.size > 0 && ` (${selectedStores.size}件選択中)`}
             </p>
@@ -190,7 +198,7 @@ export const StoresTable: React.FC<StoresTableProps> = ({
 
           <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
             {/* 検索 */}
-            <div className="relative">
+            <div className="relative flex-1 sm:flex-initial">
               <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
@@ -205,7 +213,7 @@ export const StoresTable: React.FC<StoresTableProps> = ({
             <select
               value={filterActive}
               onChange={(e) => setFilterActive(e.target.value as typeof filterActive)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-auto"
             >
               <option value="all">すべて</option>
               <option value="active">営業中のみ</option>
@@ -217,19 +225,19 @@ export const StoresTable: React.FC<StoresTableProps> = ({
 
       {/* テーブル */}
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[640px]">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-6 py-3 text-left">
+              <th className="px-3 sm:px-6 py-3 text-left">
                 <input
                   type="checkbox"
                   checked={selectedStores.size === sortedStores.length && sortedStores.length > 0}
                   onChange={handleSelectAll}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th
+                className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('name')}
               >
                 <div className="flex items-center">
@@ -237,11 +245,13 @@ export const StoresTable: React.FC<StoresTableProps> = ({
                   <SortIcon field="name" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                業態
+              </th>
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 店長
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th className="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('reportCount')}
               >
                 <div className="flex items-center">
@@ -249,8 +259,7 @@ export const StoresTable: React.FC<StoresTableProps> = ({
                   <SortIcon field="reportCount" />
                 </div>
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('created_at')}
               >
                 <div className="flex items-center">
@@ -258,51 +267,79 @@ export const StoresTable: React.FC<StoresTableProps> = ({
                   <SortIcon field="created_at" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 操作
               </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {sortedStores.map((store) => (
-              <tr 
-                key={store.id} 
+              <tr
+                key={store.id}
                 className={`hover:bg-gray-50 ${selectedStores.has(store.id) ? 'bg-blue-50' : ''}`}
               >
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
                   <input
                     type="checkbox"
                     checked={selectedStores.has(store.id)}
                     onChange={() => handleSelectStore(store.id)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="px-3 sm:px-6 py-4">
                   <div className="flex items-center">
-                    <div className="flex-shrink-0 h-10 w-10">
-                      <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                        <MapPin className="h-5 w-5 text-blue-600" />
+                    <div className="flex-shrink-0 h-8 w-8 sm:h-10 sm:w-10">
+                      <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                        <MapPin className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
                       </div>
                     </div>
-                    <div className="ml-4">
+                    <div className="ml-3 sm:ml-4 min-w-0">
                       <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm sm:text-base font-medium text-gray-900 truncate">
                           {store.name}
                         </div>
                         {store.is_active ? (
-                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
                         ) : (
-                          <XCircle className="w-4 h-4 text-red-500" />
+                          <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                         )}
                       </div>
-                      <div className="text-sm text-gray-500 flex items-center">
-                        <MapPin className="w-3 h-3 mr-1" />
-                        {store.address}
+                      <div className="text-xs sm:text-sm text-gray-500 flex items-center truncate">
+                        <MapPin className="w-3 h-3 mr-1 flex-shrink-0" />
+                        <span className="truncate">{store.address}</span>
+                      </div>
+                      {/* モバイル時に業態・店長情報を表示 */}
+                      <div className="md:hidden mt-1 space-y-1">
+                        {(store as any).brand && (
+                          <div className="flex items-center gap-1 text-xs">
+                            <span>{(store as any).brand.icon}</span>
+                            <span style={{ color: (store as any).brand.color }}>
+                              {(store as any).brand.name}
+                            </span>
+                          </div>
+                        )}
+                        {store.manager_name && (
+                          <div className="text-xs text-gray-600">
+                            店長: {store.manager_name}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="hidden md:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
+                  {(store as any).brand ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{(store as any).brand.icon}</span>
+                      <span className="text-sm font-medium" style={{ color: (store as any).brand.color }}>
+                        {(store as any).brand.name}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-sm text-gray-400">未設定</span>
+                  )}
+                </td>
+                <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
                   {store.manager_name ? (
                     <div className="text-sm">
                       <div className="font-medium text-gray-900">{store.manager_name}</div>
@@ -315,7 +352,7 @@ export const StoresTable: React.FC<StoresTableProps> = ({
                     </div>
                   )}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="hidden md:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
                   <div className="text-sm">
                     <div className="flex items-center gap-2">
                       <BarChart3 className="w-4 h-4 text-blue-500" />
@@ -329,45 +366,54 @@ export const StoresTable: React.FC<StoresTableProps> = ({
                     )}
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   {store.created_at ? formatDate(store.created_at) : '-'}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center gap-2">
+                <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                  <div className="flex items-center gap-1 sm:gap-2">
                     {onView && (
                       <button
                         onClick={() => onView(store)}
-                        className="text-blue-600 hover:text-blue-800 transition-colors p-1"
+                        className="text-blue-600 hover:text-blue-800 transition-colors p-2 hover:bg-blue-50 rounded"
                         title="詳細を見る"
                       >
-                        <Eye className="w-4 h-4" />
+                        <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     )}
                     {onEdit && (
                       <button
                         onClick={() => onEdit(store)}
-                        className="text-green-600 hover:text-green-800 transition-colors p-1"
+                        className="text-green-600 hover:text-green-800 transition-colors p-2 hover:bg-green-50 rounded"
                         title="編集"
                       >
-                        <Edit className="w-4 h-4" />
+                        <Edit className="w-4 h-4 sm:w-5 sm:h-5" />
+                      </button>
+                    )}
+                    {onHolidaySetting && (
+                      <button
+                        onClick={() => onHolidaySetting(store)}
+                        className="text-amber-600 hover:text-amber-800 transition-colors p-2 hover:bg-amber-50 rounded hidden sm:block"
+                        title="休日設定"
+                      >
+                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     )}
                     {onAssignUser && (
                       <button
                         onClick={() => onAssignUser(store.id)}
-                        className="text-purple-600 hover:text-purple-800 transition-colors p-1"
+                        className="text-purple-600 hover:text-purple-800 transition-colors p-2 hover:bg-purple-50 rounded hidden sm:block"
                         title="ユーザー割り当て"
                       >
-                        <UserPlus className="w-4 h-4" />
+                        <UserPlus className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     )}
                     {onDelete && (
                       <button
                         onClick={() => onDelete(store.id, store.name)}
-                        className="text-red-600 hover:text-red-800 transition-colors p-1"
+                        className="text-red-600 hover:text-red-800 transition-colors p-2 hover:bg-red-50 rounded hidden sm:block"
                         title="削除"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     )}
                   </div>

@@ -1,20 +1,21 @@
 import React from 'react';
 import { Store } from '../../lib/supabase';
 import { formatDate, formatCurrency } from '../../utils/calculations';
-import { 
-  X, 
-  MapPin, 
-  User, 
-  Calendar, 
-  BarChart3, 
-  CheckCircle, 
+import {
+  X,
+  MapPin,
+  User,
+  Calendar,
+  BarChart3,
+  CheckCircle,
   XCircle,
   Building,
   Edit,
   Trash2,
   UserPlus,
   FileText,
-  TrendingUp
+  TrendingUp,
+  Coins
 } from 'lucide-react';
 
 interface StoreDetailProps {
@@ -135,6 +136,16 @@ export const StoreDetail: React.FC<StoreDetailProps> = ({
                     <Calendar className="w-4 h-4 text-gray-400" />
                     <p className="text-sm text-gray-900">
                       {store.updated_at ? formatDate(store.updated_at) : '不明'}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">釣銭準備金</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Coins className="w-4 h-4 text-gray-400" />
+                    <p className="text-sm text-gray-900">
+                      {(store as any).change_fund ? formatCurrency((store as any).change_fund) : '未設定'}
                     </p>
                   </div>
                 </div>

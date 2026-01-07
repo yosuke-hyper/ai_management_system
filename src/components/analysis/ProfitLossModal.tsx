@@ -1,11 +1,14 @@
-import React, { useMemo } from 'react'
-import { X, TrendingUp, TrendingDown, Target, Calendar } from 'lucide-react'
+import React, { useMemo, useEffect, useState, useRef } from 'react'
+import { X, TrendingUp, TrendingDown, Target, Calendar, FileText, Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency, formatPercent } from '@/lib/format'
 import { DailyReportData } from '@/types'
 import { useTargets } from '@/hooks/useTargets'
+import { getMonthlyExpenses } from '@/services/supabase'
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
 
 interface ProfitLossModalProps {
   month: string // 'YYYY-MM'
@@ -49,7 +52,29 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
   }
 
   const { getAllStoresTarget, getTargetForStore } = useTargets(storeId, month)
-  
+
+  // 月次経費データを取得
+  const [monthlyExpense, setMonthlyExpense] = useState<any>(null)
+
+  useEffect(() => {
+    const loadMonthlyExpense = async () => {
+      const { data } = await getMonthlyExpenses({
+        storeId: storeId !== 'all' ? storeId : undefined,
+        month
+      })
+
+      if (data && data.length > 0) {
+        console.log('📊 ProfitLossModal: 月次経費データ取得成功', data[0])
+        setMonthlyExpense(data[0])
+      } else {
+        console.log('⚠️ ProfitLossModal: 月次経費データなし')
+        setMonthlyExpense(null)
+      }
+    }
+
+    loadMonthlyExpense()
+  }, [storeId, month])
+
   // その月のデータを取得
   const monthReports = useMemo(() => {
     console.log('PLModal: データ取得開始', { month, storeId, inputReportsCount: reports.length })
@@ -63,18 +88,18 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
   }, [reports, month, storeId])
   
   const totals = useMemo(() => {
-    console.log('PLModal: 計算開始', { monthReportsCount: monthReports.length })
-    
+    console.log('PLModal: 計算開始', { monthReportsCount: monthReports.length, hasMonthlyExpense: !!monthlyExpense })
+
     if (monthReports.length === 0) {
       console.log('PLModal: データなし - デフォルト値使用')
       return {
         salesCash10: 0, salesCash8: 0, salesCredit10: 0, salesCredit8: 0,
-        sales: 0, purchase: 0, laborCost: 0, utilities: 0,
+        sales: 0, purchase: 0, laborCost: 0, utilities: 0, rent: 0, consumables: 0,
         promotion: 0, cleaning: 0, misc: 0, communication: 0, others: 0,
         reportCount: 0
       }
     }
-    
+
     const result = monthReports.reduce((acc, r) => {
       // 安全な数値取得（存在しないフィールドは0）
       const anyR = r as any
@@ -86,12 +111,14 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
       const purchase = Number(r.purchase) || 0
       const laborCost = Number(r.laborCost) || 0
       const utilities = Number(r.utilities) || 0
+      const rent = Number(anyR.rent) || 0
+      const consumables = Number(anyR.consumables) || 0
       const promotion = Number(r.promotion) || 0
       const cleaning = Number(r.cleaning) || 0
       const misc = Number(r.misc) || 0
       const communication = Number(r.communication) || 0
       const others = Number(r.others) || 0
-      
+
       acc.salesCash10 += salesCash10
       acc.salesCash8 += salesCash8
       acc.salesCredit10 += salesCredit10
@@ -100,6 +127,8 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
       acc.purchase += purchase
       acc.laborCost += laborCost
       acc.utilities += utilities
+      acc.rent += rent
+      acc.consumables += consumables
       acc.promotion += promotion
       acc.cleaning += cleaning
       acc.misc += misc
@@ -109,20 +138,41 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
       return acc
     }, {
       salesCash10: 0, salesCash8: 0, salesCredit10: 0, salesCredit8: 0,
-      sales: 0, purchase: 0, laborCost: 0, utilities: 0,
+      sales: 0, purchase: 0, laborCost: 0, utilities: 0, rent: 0, consumables: 0,
       promotion: 0, cleaning: 0, misc: 0, communication: 0, others: 0,
       reportCount: 0
     })
-    
+
+    // 月次経費データが存在する場合は、それで経費を上書き
+    if (monthlyExpense) {
+      console.log('✅ PLModal: 月次経費データで上書き', {
+        before: { laborCost: result.laborCost, utilities: result.utilities },
+        after: {
+          laborCost: monthlyExpense.labor_cost_employee + monthlyExpense.labor_cost_part_time,
+          utilities: monthlyExpense.utilities
+        }
+      })
+      result.laborCost = monthlyExpense.labor_cost_employee + monthlyExpense.labor_cost_part_time
+      result.utilities = monthlyExpense.utilities || 0
+      result.rent = monthlyExpense.rent || 0
+      result.consumables = monthlyExpense.consumables || 0
+      result.promotion = monthlyExpense.promotion || 0
+      result.cleaning = monthlyExpense.cleaning || 0
+      result.misc = monthlyExpense.misc || 0
+      result.communication = monthlyExpense.communication || 0
+      result.others = monthlyExpense.others || 0
+    }
+
     console.log('PLModal: 計算結果', {
       sales: result.sales,
       purchase: result.purchase,
       laborCost: result.laborCost,
+      utilities: result.utilities,
       reportCount: result.reportCount
     })
-    
+
     return result
-  }, [monthReports])
+  }, [monthReports, monthlyExpense])
 
   // 売上内訳の補正：内訳の合計が売上高と一致するように調整
   const adjustedSales = useMemo(() => {
@@ -178,8 +228,9 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
     }, { sales: 0, purchase: 0, expenses: 0, profit: 0 })
   }, [month, reports, storeId])
 
-  const totalExpenses = totals.purchase + totals.laborCost + totals.utilities + 
-                        totals.promotion + totals.cleaning + totals.misc + 
+  const totalExpenses = totals.purchase + totals.laborCost + totals.utilities +
+                        totals.rent + totals.consumables +
+                        totals.promotion + totals.cleaning + totals.misc +
                         totals.communication + totals.others
   const grossProfit = totals.sales - totals.purchase
   const operatingProfit = totals.sales - totalExpenses
@@ -193,9 +244,9 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
   const target = storeId === 'all' ? getAllStoresTarget() : getTargetForStore(storeId)
   const targetAchievement = target ? (totals.sales / target.targetSales) * 100 : null
 
-  const monthLabel = new Date(month + '-01').toLocaleDateString('ja-JP', { 
-    year: 'numeric', 
-    month: 'long' 
+  const monthLabel = new Date(month + '-01').toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: 'long'
   })
 
   // デバッグ用：計算結果をコンソールに出力
@@ -210,6 +261,143 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
     salesGrowth,
     profitGrowth
   })
+
+  const handleCSVExport = () => {
+    const csv = [
+      ['項目', '金額'],
+      ['売上高', totals.sales],
+      ['　現金・10%飲食', adjustedSales.salesCash10],
+      ['　現金・8%軽減', adjustedSales.salesCash8],
+      ['　クレジット・10%飲食', adjustedSales.salesCredit10],
+      ['　クレジット・8%軽減', adjustedSales.salesCredit8],
+      ['売上原価（仕入）', totals.purchase],
+      ['売上総利益（粗利）', grossProfit],
+      ['粗利率(%)', totals.sales > 0 ? ((grossProfit / totals.sales) * 100).toFixed(1) : 0],
+      ['', ''],
+      ['販売費および一般管理費', ''],
+      ['　人件費', totals.laborCost],
+      ['　光熱費', totals.utilities],
+      ['　賃借費', totals.rent],
+      ['　消耗品費', totals.consumables],
+      ['　販促費', totals.promotion],
+      ['　清掃費', totals.cleaning],
+      ['　雑費', totals.misc],
+      ['　通信費', totals.communication],
+      ['　その他', totals.others],
+      ['販管費合計', totalExpenses - totals.purchase],
+      ['', ''],
+      ['営業利益', operatingProfit],
+      ['営業利益率(%)', profitMargin.toFixed(1)],
+      ['', ''],
+      ['比率分析', ''],
+      ['原価率(%)', totals.sales > 0 ? ((totals.purchase / totals.sales) * 100).toFixed(1) : 0],
+      ['人件費率(%)', totals.sales > 0 ? ((totals.laborCost / totals.sales) * 100).toFixed(1) : 0],
+      ['FLコスト率(%)', totals.sales > 0 ? (((totals.purchase + totals.laborCost) / totals.sales) * 100).toFixed(1) : 0]
+    ].map(row => row.join(',')).join('\n')
+
+    const BOM = '\uFEFF'
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `損益計算書_${monthLabel.replace(/\s/g, '')}_${storeId === 'all' ? '全店舗' : storeId}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  const handlePDFExport = async () => {
+    if (!contentRef.current) return
+
+    try {
+      const element = contentRef.current
+      const buttons = element.querySelectorAll('button')
+
+      buttons.forEach(btn => {
+        (btn as HTMLElement).style.display = 'none'
+      })
+
+      element.classList.add('pdf-compact-mode')
+      const styleElement = document.createElement('style')
+      styleElement.id = 'pdf-compact-styles'
+      styleElement.textContent = `
+        .pdf-compact-mode {
+          max-height: none !important;
+          overflow: visible !important;
+          font-size: 11px !important;
+        }
+        .pdf-compact-mode .px-6 { padding-left: 1rem !important; padding-right: 1rem !important; }
+        .pdf-compact-mode .py-4 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+        .pdf-compact-mode .py-6 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+        .pdf-compact-mode .gap-6 { gap: 1rem !important; }
+        .pdf-compact-mode .gap-4 { gap: 0.75rem !important; }
+        .pdf-compact-mode .gap-3 { gap: 0.5rem !important; }
+        .pdf-compact-mode .text-2xl { font-size: 1.25rem !important; line-height: 1.5rem !important; }
+        .pdf-compact-mode .text-xl { font-size: 1.1rem !important; line-height: 1.4rem !important; }
+        .pdf-compact-mode .text-lg { font-size: 1rem !important; line-height: 1.3rem !important; }
+        .pdf-compact-mode .text-base { font-size: 0.9rem !important; line-height: 1.2rem !important; }
+        .pdf-compact-mode .text-sm { font-size: 0.8rem !important; line-height: 1.1rem !important; }
+        .pdf-compact-mode .text-xs { font-size: 0.7rem !important; line-height: 1rem !important; }
+        .pdf-compact-mode .p-6 { padding: 1rem !important; }
+        .pdf-compact-mode .p-4 { padding: 0.75rem !important; }
+        .pdf-compact-mode .p-3 { padding: 0.5rem !important; }
+        .pdf-compact-mode .p-2 { padding: 0.375rem !important; }
+        .pdf-compact-mode .space-y-4 > * + * { margin-top: 0.75rem !important; }
+        .pdf-compact-mode .space-y-3 > * + * { margin-top: 0.5rem !important; }
+        .pdf-compact-mode .space-y-2 > * + * { margin-top: 0.375rem !important; }
+        .pdf-compact-mode h3 { font-size: 1rem !important; margin: 0.5rem 0 !important; }
+        .pdf-compact-mode .grid { gap: 0.5rem !important; }
+      `
+      document.head.appendChild(styleElement)
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const canvas = await html2canvas(element, {
+        scale: 1.5,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: element.scrollWidth,
+        windowHeight: element.scrollHeight
+      })
+
+      const styleEl = document.getElementById('pdf-compact-styles')
+      if (styleEl) styleEl.remove()
+      element.classList.remove('pdf-compact-mode')
+      buttons.forEach(btn => {
+        (btn as HTMLElement).style.display = ''
+      })
+
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pdfWidth = 210
+      const pdfHeight = 297
+
+      const imgWidth = pdfWidth
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width
+
+      if (imgHeight <= pdfHeight) {
+        const yOffset = 0
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, yOffset, imgWidth, imgHeight)
+      } else {
+        const scaleFactor = pdfHeight / imgHeight
+        const scaledWidth = imgWidth * scaleFactor
+        const scaledHeight = pdfHeight
+        const xOffset = (pdfWidth - scaledWidth) / 2
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', xOffset, 0, scaledWidth, scaledHeight)
+      }
+
+      pdf.save(`損益計算書_${monthLabel.replace(/\s/g, '')}_${storeId === 'all' ? '全店舗' : storeId}.pdf`)
+    } catch (error) {
+      console.error('PDF生成エラー:', error)
+      const styleEl = document.getElementById('pdf-compact-styles')
+      if (styleEl) styleEl.remove()
+      if (contentRef.current) {
+        contentRef.current.classList.remove('pdf-compact-mode')
+      }
+      alert('PDFの生成に失敗しました。もう一度お試しください。')
+    }
+  }
 
   const PLRow = ({ label, amount, isSubtotal = false, isTotal = false, growth, note }: {
     label: string
@@ -254,7 +442,7 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-background rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div ref={contentRef} className="bg-background rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -263,12 +451,10 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-semibold text-foreground">
-              <p>月パラメータ: {month}</p>
-              <p>月形式有効: {isValidMonth ? 'OK' : 'NG'}</p>
                 {monthLabel} 損益計算書
               </h2>
               <p className="text-sm text-muted-foreground">
-                {storeId === 'all' ? '全店舗合計' : '豊洲店'} • {totals.reportCount}件の報告
+                {storeId === 'all' ? '全店舗合計' : storeId} • {totals.reportCount}件の報告
               </p>
             </div>
           </div>
@@ -343,16 +529,18 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
                 <div className="ml-4 space-y-1">
                   <PLRow label="人件費" amount={totals.laborCost} />
                   <PLRow label="光熱費" amount={totals.utilities} />
+                  <PLRow label="賃借費" amount={totals.rent} />
+                  <PLRow label="消耗品費" amount={totals.consumables} />
                   <PLRow label="販促費" amount={totals.promotion} />
                   <PLRow label="清掃費" amount={totals.cleaning} />
                   <PLRow label="雑費" amount={totals.misc} />
                   <PLRow label="通信費" amount={totals.communication} />
                   <PLRow label="その他" amount={totals.others} />
                 </div>
-                <PLRow 
-                  label="販管費合計" 
-                  amount={totalExpenses - totals.purchase} 
-                  isSubtotal 
+                <PLRow
+                  label="販管費合計"
+                  amount={totalExpenses - totals.purchase}
+                  isSubtotal
                 />
               </div>
 
@@ -440,46 +628,20 @@ export const ProfitLossModal: React.FC<ProfitLossModalProps> = ({
 
           {/* アクションボタン */}
           <div className="flex gap-3 pt-4 border-t border-border">
-            <Button 
-              variant="outline" 
-              className="flex-1"
-              onClick={() => window.print()}
+            <Button
+              variant="outline"
+              className="flex-1 gap-2"
+              onClick={handlePDFExport}
             >
+              <Download className="w-4 h-4" />
               PDFエクスポート
             </Button>
-            <Button 
-              variant="outline" 
-              className="flex-1"
-              onClick={() => {
-                const csv = [
-                  ['項目', '金額'],
-                  ['売上高', totals.sales],
-                  ['　現金・10%', totals.salesCash10],
-                  ['　現金・8%', totals.salesCash8],
-                  ['　クレジット・10%', totals.salesCredit10],
-                  ['　クレジット・8%', totals.salesCredit8],
-                  ['売上原価', totals.purchase],
-                  ['売上総利益', grossProfit],
-                  ['人件費', totals.laborCost],
-                  ['光熱費', totals.utilities],
-                  ['販促費', totals.promotion],
-                  ['清掃費', totals.cleaning],
-                  ['雑費', totals.misc],
-                  ['通信費', totals.communication],
-                  ['その他', totals.others],
-                  ['営業利益', operatingProfit],
-                  ['利益率(%)', profitMargin]
-                ].map(row => row.join(',')).join('\n')
-                
-                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `PL_${month}_${storeId}.csv`
-                a.click()
-                URL.revokeObjectURL(url)
-              }}
+            <Button
+              variant="outline"
+              className="flex-1 gap-2"
+              onClick={handleCSVExport}
             >
+              <FileText className="w-4 h-4" />
               CSVエクスポート
             </Button>
             <Button onClick={onClose}>

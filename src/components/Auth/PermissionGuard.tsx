@@ -4,10 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Shield, TriangleAlert as AlertTriangle, Lock, Users, ArrowLeft } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { FeatureLockedModal } from '@/components/ui/feature-locked-modal'
+import { useLocation } from 'react-router-dom'
 
 interface PermissionGuardProps {
   children: React.ReactNode
-  requiredRole?: 'staff' | 'manager' | 'admin'
+  requiredRole?: 'staff' | 'manager' | 'admin' | 'owner'
   requiredStoreAccess?: string
   fallback?: React.ReactNode
   showError?: boolean
@@ -20,7 +22,47 @@ export const PermissionGuard: React.FC<PermissionGuardProps> = ({
   fallback,
   showError = true
 }) => {
-  const { user, hasPermission, canAccessStore } = useAuth()
+  const { user, hasPermission, canAccessStore, isDemoMode } = useAuth()
+  const location = useLocation()
+  const [showLockedModal, setShowLockedModal] = React.useState(false)
+
+  // ユーザーがログインしていない場合（デモモードは除く）
+  if (!user && !isDemoMode) {
+    return fallback || null
+  }
+
+  // デモモードで編集系ページにアクセスした場合は登録プロンプトを表示
+  const restrictedPaths = ['/report', '/expenses/monthly', '/organization', '/admin']
+  const isRestrictedPath = restrictedPaths.some(path => location.pathname.startsWith(path))
+
+  if (isDemoMode && isRestrictedPath) {
+    const featureNames: Record<string, string> = {
+      '/report': '日報入力',
+      '/expenses/monthly': '月次経費入力',
+      '/organization': '組織・メンバー管理',
+      '/admin': 'システム設定'
+    }
+
+    const featureDescriptions: Record<string, string> = {
+      '/report': '日々の売上・経費データを入力して店舗の業績を記録できます',
+      '/expenses/monthly': '家賃や固定費などの月次経費を入力して正確な損益分析が行えます',
+      '/organization': '組織情報の編集、メンバー管理、店舗割り当て、サブスクリプションの設定ができます',
+      '/admin': 'システム全体の設定やAI機能の管理ができます'
+    }
+
+    const matchedPath = restrictedPaths.find(path => location.pathname.startsWith(path))
+
+    return (
+      <>
+        <FeatureLockedModal
+          isOpen={true}
+          onClose={() => window.history.back()}
+          featureName={matchedPath ? featureNames[matchedPath] : '制限機能'}
+          featureDescription={matchedPath ? featureDescriptions[matchedPath] : undefined}
+        />
+      </>
+    )
+  }
 
   // ユーザーがログインしていない場合
   if (!user) {
@@ -33,8 +75,9 @@ export const PermissionGuard: React.FC<PermissionGuardProps> = ({
 
     const roleNames = {
       staff: 'スタッフ',
-      manager: '店長・マネージャー',
-      admin: '統括責任者'
+      manager: 'マネージャー',
+      admin: '管理者',
+      owner: 'オーナー'
     }
 
     return (
@@ -151,5 +194,16 @@ export const PermissionGuard: React.FC<PermissionGuardProps> = ({
   }
 
   // 権限チェック通過：子コンポーネントを表示
-  return <>{children}</>
+  return (
+    <>
+      {children}
+      {showLockedModal && (
+        <FeatureLockedModal
+          isOpen={showLockedModal}
+          onClose={() => setShowLockedModal(false)}
+          featureName="制限機能"
+        />
+      )}
+    </>
+  )
 }

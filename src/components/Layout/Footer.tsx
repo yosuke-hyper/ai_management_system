@@ -10,7 +10,7 @@ export const Footer: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div>
-            <h3 className="text-white font-bold text-lg mb-4">AI経営管理システム</h3>
+            <h3 className="text-white font-bold text-lg mb-4">FoodValue for 経営分析</h3>
             <p className="text-sm text-slate-400">
               飲食店の経営を支援する総合的な分析ツール
             </p>
@@ -58,7 +58,7 @@ export const Footer: React.FC = () => {
 
         <div className="border-t border-slate-800 mt-8 pt-6 text-center">
           <p className="text-sm text-slate-400">
-            &copy; {currentYear} AI経営管理システム. All rights reserved.
+            &copy; {currentYear} FoodValue for 経営分析. All rights reserved.
           </p>
         </div>
       </div>

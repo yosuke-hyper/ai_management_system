@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
-import { type Store, type TargetData } from '@/types'
+import { type Store, type TargetData, type Brand } from '@/types'
 import { type Vendor, type StoreVendorAssignment } from '@/types'
 import { useAuth } from './AuthContext'
+import { useOrganization } from './OrganizationContext'
+import { mockStores, mockVendors } from '@/lib/mock'
+import { supabase } from '@/lib/supabase'
 import {
   getStores,
   createStore as createStoreDb,
@@ -17,7 +20,9 @@ import {
   removeVendorFromStore as removeVendorFromStoreDb,
   getTargets,
   upsertTarget as upsertTargetDb,
-  deleteTarget as deleteTargetDb
+  deleteTarget as deleteTargetDb,
+  getBrands,
+  type BrandDb
 } from '../services/supabase'
 
 // UUID validation utility
@@ -32,6 +37,8 @@ type StoreInput = {
   managerId?: string | null
   managerName?: string | null
   manager?: string | null
+  brandId?: string | null
+  changeFund?: number | null
   isActive?: boolean
 }
 
@@ -39,12 +46,13 @@ type AdminCtx = {
   stores: Store[]
   targets: TargetData[]
   vendors: Vendor[]
+  brands: Brand[]
   storeVendorAssignments: StoreVendorAssignment[]
   addStore: (input: StoreInput) => Promise<{ ok: boolean; error?: string }>
   updateStore: (id: string, patch: Partial<Store>) => void
   deleteStore: (id: string) => void
-  upsertTarget: (t: TargetData) => void
-  deleteTarget: (storeId: string, period: string) => void
+  upsertTarget: (t: TargetData) => Promise<void>
+  deleteTarget: (storeId: string, period: string) => Promise<void>
   addVendor: (vendor: Omit<Vendor, 'id'>) => void
   updateVendor: (id: string, patch: Partial<Vendor>) => void
   deleteVendor: (id: string) => void
@@ -59,24 +67,123 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
   const [stores, setStores] = useState<Store[]>([])
   const [targets, setTargets] = useState<TargetData[]>([])
   const [vendors, setVendors] = useState<Vendor[]>([])
+  const [brands, setBrands] = useState<Brand[]>([])
   const [storeVendorAssignments, setStoreVendorAssignments] = useState<StoreVendorAssignment[]>([])
   const [loading, setLoading] = useState(true)
-  const { user } = useAuth()
+  const { user, isDemoMode } = useAuth()
+  const { organization } = useOrganization()
 
   // Supabaseからデータを取得
   useEffect(() => {
     const fetchData = async () => {
       if (!user) return
 
+      // デモモードの場合は固定デモデータを取得
+      if (isDemoMode) {
+        console.log('🎭 AdminDataContext: Loading demo data from fixed_demo_* tables')
+        try {
+          // デモ店舗を取得
+          const { data: demoStores } = await supabase
+            .from('fixed_demo_stores')
+            .select('*')
+            .order('name')
+
+          // デモ業態を取得
+          const { data: demoBrands } = await supabase
+            .from('fixed_demo_brands')
+            .select('*')
+            .order('name')
+
+          if (demoStores) {
+            console.log('🏪 Demo stores loaded:', demoStores.length)
+            setStores(demoStores.map(s => ({
+              id: s.id,
+              name: s.name,
+              address: s.location || '',
+              organizationId: 'fixed-demo-org',
+              isActive: true,
+              createdAt: s.created_at,
+              managerId: null,
+              managerName: null,
+              brandId: s.brand_id || null,
+              change_fund: (s as any).change_fund,
+              changeFund: (s as any).change_fund
+            })))
+          }
+
+          if (demoBrands) {
+            console.log('🏷️ Demo brands loaded:', demoBrands.length)
+            setBrands(demoBrands.map(b => ({
+              id: b.id,
+              organizationId: 'fixed-demo-org',
+              name: b.name,
+              displayName: b.display_name,
+              type: b.type,
+              color: b.color || '#3B82F6',
+              icon: b.icon || '🏪',
+              description: b.description || '',
+              defaultCostRate: Number(b.default_cost_rate || 30),
+              defaultLaborRate: Number(b.default_labor_rate || 25),
+              defaultProfitMargin: Number(b.default_profit_margin || 20),
+              isActive: true,
+              displayOrder: 0,
+              settings: {},
+              createdAt: b.created_at,
+              updatedAt: b.created_at
+            })))
+          }
+        } catch (error) {
+          console.error('Failed to fetch demo data:', error)
+        }
+        setLoading(false)
+        return
+      }
+
+      // ローカルデモモード（Supabase未設定）の場合はモックデータを設定
+      if (user.id === 'demo-user' && !user.organizationId) {
+        setStores(mockStores as Store[])
+        setVendors(mockVendors.map(v => ({
+          id: v.id,
+          name: v.name,
+          category: v.category,
+          contactInfo: v.contact_info,
+          isActive: v.is_active
+        })))
+        const mockAssignments: StoreVendorAssignment[] = []
+        mockStores.forEach(store => {
+          mockVendors.forEach((vendor, index) => {
+            mockAssignments.push({
+              storeId: store.id,
+              vendorId: vendor.id,
+              displayOrder: index
+            })
+          })
+        })
+        setStoreVendorAssignments(mockAssignments)
+        setLoading(false)
+        return
+      }
+
       try {
         setLoading(true)
 
+        // スーパー管理者が組織を切り替えている場合は、その組織のデータを取得
+        const savedOrgId = localStorage.getItem('superadmin_selected_org')
+        const targetOrgId = savedOrgId || organization?.id || user.organizationId
+
+        if (savedOrgId) {
+          console.log('📊 AdminDataContext: Fetching data for super admin selected organization:', savedOrgId)
+        } else {
+          console.log('📊 AdminDataContext: Fetching data for organization:', targetOrgId)
+        }
+
         // 並行してデータを取得
-        const [storesResult, vendorsResult, targetsResult, assignmentsResult] = await Promise.all([
+        const [storesResult, vendorsResult, targetsResult, assignmentsResult, brandsResult] = await Promise.all([
           getStores(),
           getVendors(),
           getTargets(),
-          getAllStoreVendorAssignments()
+          getAllStoreVendorAssignments(),
+          getBrands({ organizationId: targetOrgId, isActive: true })
         ])
 
         // Stores
@@ -86,6 +193,10 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
             name: store.name,
             address: store.address,
             manager: store.manager_id || '',
+            brandId: store.brand_id || '',
+            brand_id: store.brand_id,
+            change_fund: store.change_fund,
+            changeFund: store.change_fund,
             isActive: store.is_active ?? true
           }))
           setStores(transformedStores)
@@ -132,6 +243,36 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
           console.log('⚠️ AdminDataContext: 割り当てデータなし or エラー', assignmentsResult)
         }
 
+        // Brands
+        if (!brandsResult.error && brandsResult.data) {
+          const transformedBrands: Brand[] = brandsResult.data.map((brand: BrandDb) => ({
+            id: brand.id,
+            organizationId: brand.organization_id,
+            name: brand.name,
+            displayName: brand.display_name,
+            type: brand.type,
+            defaultTargetProfitMargin: brand.default_target_profit_margin,
+            defaultCostRate: brand.default_cost_rate,
+            defaultLaborRate: brand.default_labor_rate,
+            color: brand.color,
+            icon: brand.icon,
+            description: brand.description,
+            settings: brand.settings,
+            isActive: brand.is_active,
+            displayOrder: brand.display_order,
+            createdAt: brand.created_at,
+            updatedAt: brand.updated_at
+          }))
+          console.log('🏷️ AdminDataContext: ブランドデータ読み込み完了:', transformedBrands)
+          console.log('🏷️ AdminDataContext: ブランド詳細:', transformedBrands.map(b => ({
+            id: b.id,
+            name: b.name,
+            displayName: b.displayName,
+            isActive: b.isActive
+          })))
+          setBrands(transformedBrands)
+        }
+
       } catch (err) {
         console.error('❌ AdminDataProvider: データ取得エラー:', err)
       } finally {
@@ -140,7 +281,7 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
     }
 
     fetchData()
-  }, [user])
+  }, [user, isDemoMode, organization?.id])
 
   const addStore: AdminCtx['addStore'] = async (input) => {
     try {
@@ -151,17 +292,28 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
         return { ok: false, error: '住所は必須です' }
       }
 
+      if (!user?.id) {
+        return { ok: false, error: 'ユーザー情報が取得できません' }
+      }
+
       const manager_id = input.managerId && isValidUUID(input.managerId)
         ? input.managerId
         : input.manager && isValidUUID(input.manager)
         ? input.manager
         : undefined
 
+      const brand_id = input.brandId && isValidUUID(input.brandId)
+        ? input.brandId
+        : undefined
+
       const payload = {
         name: input.name.trim(),
         address: input.address.trim(),
         manager_id,
-        is_active: input.isActive ?? true
+        brand_id,
+        change_fund: input.changeFund,
+        is_active: input.isActive ?? true,
+        user_id: user.id
       }
 
       const { data, error } = await createStoreDb(payload)
@@ -176,6 +328,10 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
           name: data.name,
           address: data.address,
           manager: data.manager_id || '',
+          brandId: data.brand_id || '',
+          brand_id: data.brand_id,
+          change_fund: data.change_fund,
+          changeFund: data.change_fund,
           isActive: data.is_active ?? true
         }
         setStores(prev => [...prev, newStore])
@@ -190,22 +346,25 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
 
   const updateStore: AdminCtx['updateStore'] = async (id, patch) => {
     try {
-      // Validate manager_id - only set if it's a valid UUID, otherwise undefined  
+      // Validate manager_id - only set if it's a valid UUID, otherwise undefined
       const managerId = patch.manager && isValidUUID(patch.manager) ? patch.manager : undefined
-      
+      const brandId = patch.brandId && isValidUUID(patch.brandId) ? patch.brandId : undefined
+
       const updateData = {
         name: patch.name,
         address: patch.address,
         manager_id: managerId,
+        brand_id: brandId,
+        change_fund: patch.changeFund,
         is_active: patch.isActive
       }
-      
+
       const { data, error } = await updateStoreDb(id, updateData)
-      
+
       if (error) {
         throw new Error(error.message)
       }
-      
+
       setStores(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s))
     } catch (err) {
       console.error('❌ 店舗更新エラー:', err)
@@ -466,11 +625,11 @@ export const AdminDataProvider: React.FC<{children: React.ReactNode}> = ({ child
   }
 
   const value = useMemo<AdminCtx>(() => ({
-    stores, targets, vendors, storeVendorAssignments,
+    stores, targets, vendors, brands, storeVendorAssignments,
     addStore, updateStore, deleteStore, upsertTarget, deleteTarget,
     addVendor, updateVendor, deleteVendor, getStoreVendors,
     assignVendorToStore, unassignVendorFromStore
-  }), [stores, targets, vendors, storeVendorAssignments])
+  }), [stores, targets, vendors, brands, storeVendorAssignments])
 
   return <AdminDataContext.Provider value={value}>{children}</AdminDataContext.Provider>
 }

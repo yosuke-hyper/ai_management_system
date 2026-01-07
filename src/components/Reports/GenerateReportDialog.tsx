@@ -3,11 +3,14 @@ import { FileText, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { generateReport } from '../../hooks/useAIReports';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { getStores } from '../../services/supabase';
+import { useDemoAIUsage, isDemoSession, getDemoSessionId } from '../../hooks/useDemoAIUsage';
+import { DemoAIUsageIndicator } from '../Demo/DemoAIUsageIndicator';
 
 interface GenerateReportDialogProps {
   onClose: () => void;
-  onSuccess: (reportId: string) => void;
+  onSuccess: (reportId: string, reportData?: any) => void;
 }
 
 interface Store {
@@ -16,12 +19,18 @@ interface Store {
 }
 
 export function GenerateReportDialog({ onClose, onSuccess }: GenerateReportDialogProps) {
+  const { allStores } = useAuth();
   const [reportType, setReportType] = useState<'weekly' | 'monthly'>('weekly');
   const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [loadingStores, setLoadingStores] = useState(true);
+
+  // Demo AI usage tracking
+  const isDemo = isDemoSession();
+  const demoSessionId = getDemoSessionId();
+  const { status: demoUsageStatus, loading: demoUsageLoading, checkUsage: checkDemoUsage, incrementUsage: incrementDemoUsage } = useDemoAIUsage(demoSessionId);
 
   const today = new Date().toISOString().split('T')[0];
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -32,12 +41,15 @@ export function GenerateReportDialog({ onClose, onSuccess }: GenerateReportDialo
   useEffect(() => {
     const fetchStores = async () => {
       try {
-        const { data, error } = await supabase
-          .from('stores')
-          .select('id, name')
-          .eq('is_active', true)
-          .order('name');
+        // AuthContextのallStoresを優先的に使用
+        if (allStores && allStores.length > 0) {
+          setStores(allStores);
+          setLoadingStores(false);
+          return;
+        }
 
+        // フォールバック: 組織IDでフィルタリングされたgetStoresを使用
+        const { data, error } = await getStores();
         if (error) throw error;
         setStores(data || []);
       } catch (err) {
@@ -48,9 +60,21 @@ export function GenerateReportDialog({ onClose, onSuccess }: GenerateReportDialo
     };
 
     fetchStores();
-  }, []);
+  }, [allStores]);
 
   const handleGenerate = async () => {
+    // Check demo AI usage limits if in demo mode
+    if (isDemo && demoSessionId) {
+      const demoCheck = await checkDemoUsage('report');
+      if (demoCheck && !demoCheck.allowed) {
+        setResult({
+          success: false,
+          message: `${demoCheck.message} 本登録で無制限に利用できます。`
+        });
+        return;
+      }
+    }
+
     setIsGenerating(true);
     setResult(null);
 
@@ -70,9 +94,14 @@ export function GenerateReportDialog({ onClose, onSuccess }: GenerateReportDialo
       if (error) {
         setResult({ success: false, message: error });
       } else if (data) {
+        // Increment demo usage if in demo mode
+        if (isDemo && demoSessionId) {
+          await incrementDemoUsage('report');
+        }
+
         setResult({ success: true, message: 'レポートが正常に生成されました。表示中...' });
         setTimeout(() => {
-          onSuccess(data.id);
+          onSuccess(data.id, data);
           onClose();
         }, 1000);
       }
@@ -232,6 +261,17 @@ export function GenerateReportDialog({ onClose, onSuccess }: GenerateReportDialo
               )}
             </Button>
           </div>
+
+          {isDemo && demoUsageStatus && (
+            <div className="mb-4">
+              <DemoAIUsageIndicator
+                status={demoUsageStatus}
+                loading={demoUsageLoading}
+                featureType="report"
+                compact={false}
+              />
+            </div>
+          )}
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-900">

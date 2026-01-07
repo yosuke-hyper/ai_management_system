@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button'
 import { X, Mail, Link as LinkIcon, Copy, CheckCircle, AlertCircle } from 'lucide-react'
 import { createInvitation, generateInvitationLink } from '@/services/organizationService'
 import { canInviteUser } from '@/services/usageLimits'
+import { subscriptionService } from '@/services/subscriptionService'
+import { avatarToast } from '@/lib/avatarToast'
 
 interface Props {
   organizationId: string
@@ -38,9 +40,9 @@ export const InviteModal: React.FC<Props> = ({ organizationId, userId, onClose, 
       setLoading(true)
       setError(null)
 
-      const limitCheck = await canInviteUser(userId)
+      const limitCheck = await subscriptionService.canAddUser(organizationId)
       if (!limitCheck.allowed) {
-        setError(limitCheck.message || 'ユーザー数の上限に達しています')
+        setError(limitCheck.reason || 'ユーザー数の上限に達しています')
         return
       }
 
@@ -75,8 +77,10 @@ export const InviteModal: React.FC<Props> = ({ organizationId, userId, onClose, 
       await navigator.clipboard.writeText(invitationLink)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+      avatarToast.success('コピーしました')
     } catch (err) {
       console.error('Failed to copy link:', err)
+      avatarToast.error('コピーできませんでした')
     }
   }
 
@@ -91,18 +95,18 @@ export const InviteModal: React.FC<Props> = ({ organizationId, userId, onClose, 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="flex items-center justify-between p-6 border-b border-slate-200">
-          <h2 className="text-xl font-bold text-slate-900">メンバーを招待</h2>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-w-[calc(100vw-32px)]">
+        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-200">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900">メンバーを招待</h2>
           <button
             onClick={handleClose}
-            className="p-1 hover:bg-slate-100 rounded-lg transition-colors"
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {success ? (
             <div className="space-y-4">
               <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2">

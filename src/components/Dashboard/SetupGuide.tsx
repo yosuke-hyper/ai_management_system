@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FileSpreadsheet, ExternalLink, Copy, CheckCircle, AlertCircle, Book } from 'lucide-react';
+import { avatarToast } from '../../lib/avatarToast';
 
 export const SetupGuide: React.FC = () => {
   const [showGuide, setShowGuide] = useState(false);
@@ -55,10 +56,16 @@ VITE_GOOGLE_SHEET_ID=1GWp6bW4WnSc9EFobaYNqhUz6wtMuL6gG74Tg2Osvtco`,
     }
   ];
 
-  const copyToClipboard = (text: string, stepIndex: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedStep(stepIndex);
-    setTimeout(() => setCopiedStep(null), 2000);
+  const copyToClipboard = async (text: string, stepIndex: number) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedStep(stepIndex);
+      setTimeout(() => setCopiedStep(null), 2000);
+      avatarToast.success('コピーしました');
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      avatarToast.error('コピーできませんでした');
+    }
   };
 
   return (

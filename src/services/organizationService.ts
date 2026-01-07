@@ -1,5 +1,11 @@
 import { supabase } from '@/lib/supabase'
 import { createAuditLog } from './auditLog'
+import {
+  toAppError,
+  DatabaseError,
+  NotFoundError,
+  AuthenticationError
+} from '@/lib/errors'
 
 /**
  * 組織サービス
@@ -8,26 +14,50 @@ import { createAuditLog } from './auditLog'
 
 /**
  * 現在のユーザーの organization_id を取得
+ * userIdを指定しない場合は、現在ログイン中のユーザーから取得
  */
-export async function getCurrentUserOrganizationId(userId: string): Promise<string | null> {
-  if (!userId) return null
-
+export async function getCurrentUserOrganizationId(userId?: string): Promise<string | null> {
   try {
+    // スーパー管理者が組織を切り替えている場合は、その組織IDを優先
+    const savedOrgId = localStorage.getItem('superadmin_selected_org')
+    if (savedOrgId) {
+      console.log('🎯 getCurrentUserOrganizationId: Using super admin selected organization:', savedOrgId)
+      return savedOrgId
+    }
+
+    let targetUserId = userId
+
+    // userIdが指定されていない場合は、現在のユーザーを取得
+    if (!targetUserId) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) {
+        throw new AuthenticationError('ユーザー情報の取得に失敗しました')
+      }
+      if (!user) {
+        throw new AuthenticationError('ログインが必要です')
+      }
+      targetUserId = user.id
+    }
+
     const { data, error } = await supabase
       .from('organization_members')
       .select('organization_id')
-      .eq('user_id', userId)
+      .eq('user_id', targetUserId)
       .maybeSingle()
 
     if (error) {
-      console.error('Failed to get organization ID:', error)
-      return null
+      throw new DatabaseError('組織IDの取得に失敗しました', { error: error.message })
     }
 
-    return data?.organization_id || null
+    if (!data?.organization_id) {
+      throw new NotFoundError('組織', targetUserId, { userId: targetUserId })
+    }
+
+    return data.organization_id
   } catch (error) {
-    console.error('Error getting organization ID:', error)
-    return null
+    const appError = toAppError(error)
+    console.error('Error getting organization ID:', appError)
+    throw appError
   }
 }
 
@@ -139,8 +169,11 @@ export async function getOrganizationMembers(organizationId: string) {
   const { data, error } = await supabase
     .from('organization_members')
     .select(`
-      *,
-      profiles!inner(id, name, email, role)
+      organization_id,
+      user_id,
+      role,
+      joined_at,
+      profiles!organization_members_user_id_fkey(id, name, email, role)
     `)
     .eq('organization_id', organizationId)
     .order('joined_at', { ascending: false })
@@ -154,7 +187,7 @@ export async function getOrganizationMembers(organizationId: string) {
 export async function addOrganizationMember(
   organizationId: string,
   userId: string,
-  role: 'owner' | 'admin' | 'member' = 'member'
+  role: 'owner' | 'admin' | 'manager' | 'staff' = 'staff'
 ) {
   const { data, error } = await supabase
     .from('organization_members')
@@ -196,7 +229,7 @@ export async function removeOrganizationMember(organizationId: string, userId: s
 export async function updateOrganizationMemberRole(
   organizationId: string,
   userId: string,
-  role: 'owner' | 'admin' | 'member',
+  role: 'owner' | 'admin' | 'manager' | 'staff',
   actorUserId?: string
 ) {
   const { data: oldRole } = await supabase
@@ -227,6 +260,76 @@ export async function updateOrganizationMemberRole(
   }
 
   return { data, error }
+}
+
+/**
+ * メンバーの店舗割り当てを取得
+ */
+export async function getMemberStoreAssignments(userId: string) {
+  const { data, error } = await supabase
+    .from('store_assignments')
+    .select(`
+      store_id,
+      stores!store_assignments_store_id_fkey(id, name)
+    `)
+    .eq('user_id', userId)
+
+  if (error) {
+    return { data: null, error }
+  }
+
+  const stores = (data || [])
+    .filter((assignment: any) => assignment.stores !== null)
+    .map((assignment: any) => ({
+      id: assignment.stores.id,
+      name: assignment.stores.name
+    }))
+
+  return { data: stores, error: null }
+}
+
+/**
+ * メンバーに店舗を割り当て
+ */
+export async function assignStoreToMember(userId: string, storeId: string, actorUserId?: string) {
+  const { data, error } = await supabase
+    .from('store_assignments')
+    .insert({
+      user_id: userId,
+      store_id: storeId,
+      created_at: new Date().toISOString()
+    })
+    .select()
+    .single()
+
+  if (!error && actorUserId) {
+    await createAuditLog(actorUserId, 'store_assignment.created', 'store_assignment', {
+      resourceId: data?.id,
+      details: { userId, storeId }
+    })
+  }
+
+  return { data, error }
+}
+
+/**
+ * メンバーから店舗割り当てを解除
+ */
+export async function removeStoreFromMember(userId: string, storeId: string, actorUserId?: string) {
+  const { error } = await supabase
+    .from('store_assignments')
+    .delete()
+    .eq('user_id', userId)
+    .eq('store_id', storeId)
+
+  if (!error && actorUserId) {
+    await createAuditLog(actorUserId, 'store_assignment.deleted', 'store_assignment', {
+      resourceId: `${userId}-${storeId}`,
+      details: { userId, storeId }
+    })
+  }
+
+  return { error }
 }
 
 /**
@@ -268,6 +371,34 @@ export async function createInvitation(
       resourceId: data.id,
       details: { email, role, organizationId }
     })
+
+    // メール送信を試行（失敗しても招待作成は成功とする）
+    try {
+      const { sendInvitationEmail } = await import('./emailService')
+      const { data: inviterProfile } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('id', invitedBy)
+        .single()
+
+      const { data: organization } = await supabase
+        .from('organizations')
+        .select('name')
+        .eq('id', organizationId)
+        .single()
+
+      if (inviterProfile && organization) {
+        await sendInvitationEmail({
+          email: email.toLowerCase(),
+          inviterName: inviterProfile.name,
+          organizationName: organization.name,
+          role,
+          invitationToken: token
+        })
+      }
+    } catch (emailError) {
+      console.error('招待メール送信エラー（招待自体は成功）:', emailError)
+    }
   }
 
   return { data, error }
@@ -360,6 +491,27 @@ export async function acceptInvitation(token: string, userId: string) {
     .update({ organization_id: invitation.organization_id })
     .eq('id', userId)
 
+  // 新メンバー追加の通知を送信
+  try {
+    const { notifyNewMemberAdded } = await import('./notificationTriggers')
+    const { data: userProfile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .single()
+
+    if (userProfile) {
+      await notifyNewMemberAdded(
+        invitation.organization_id,
+        userId,
+        userProfile.email,
+        invitation.role
+      )
+    }
+  } catch (error) {
+    console.error('Failed to send new member notification:', error)
+  }
+
   return { data: member, error: null }
 }
 
@@ -393,4 +545,66 @@ export async function deleteInvitation(invitationId: string) {
 export function generateInvitationLink(token: string): string {
   const baseUrl = window.location.origin
   return `${baseUrl}/invite/${token}`
+}
+
+/**
+ * スーパー管理者用: 組織コンテキストを設定
+ * RLSポリシーがこの設定を使用して、選択した組織のデータにアクセスできるようにする
+ */
+export async function setSelectedOrganizationContext(organizationId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc('set_selected_organization', {
+      target_org_id: organizationId
+    })
+
+    if (error) {
+      console.error('Failed to set organization context:', error)
+      return false
+    }
+
+    console.log('✅ Organization context set:', organizationId)
+    return data === true
+  } catch (error) {
+    console.error('Error setting organization context:', error)
+    return false
+  }
+}
+
+/**
+ * スーパー管理者用: 組織コンテキストをクリア
+ */
+export async function clearSelectedOrganizationContext(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc('clear_selected_organization')
+
+    if (error) {
+      console.error('Failed to clear organization context:', error)
+      return false
+    }
+
+    console.log('✅ Organization context cleared')
+    return data === true
+  } catch (error) {
+    console.error('Error clearing organization context:', error)
+    return false
+  }
+}
+
+/**
+ * スーパー管理者用: 現在選択されている組織IDを取得
+ */
+export async function getSelectedOrganizationContext(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_selected_organization')
+
+    if (error) {
+      console.error('Failed to get organization context:', error)
+      return null
+    }
+
+    return data || null
+  } catch (error) {
+    console.error('Error getting organization context:', error)
+    return null
+  }
 }

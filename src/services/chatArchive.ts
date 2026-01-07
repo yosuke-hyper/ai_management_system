@@ -5,6 +5,7 @@ export type ChatRole = 'system' | 'user' | 'assistant'
 export interface Conversation {
   id: string
   user_id: string
+  demo_session_id?: string | null
   store_id?: string | null
   title?: string | null
   archived: boolean
@@ -36,7 +37,12 @@ const readLS = <T>(k: string, def: T): T => {
 
 const writeLS = (k: string, v: any) => localStorage.setItem(k, JSON.stringify(v))
 
-export async function createConversation(userId: string, storeId?: string, title?: string) {
+export async function createConversation(
+  userId: string,
+  storeId?: string,
+  title?: string,
+  demoSessionId?: string | null
+) {
   if (useMock()) {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
@@ -55,16 +61,47 @@ export async function createConversation(userId: string, storeId?: string, title
     return { data: conv, error: null }
   }
 
-  const { data, error } = await supabase!
-    .from('ai_conversations')
-    .insert({ user_id: userId, store_id: storeId ?? 'all', title })
-    .select()
-    .single()
+  console.log('🆕 Creating conversation:', { userId, storeId, title, demoSessionId })
 
-  return { data, error }
+  // For demo users, set demo_session_id and leave user_id null
+  // For authenticated users, set user_id and leave demo_session_id null
+  const insertData: any = {
+    store_id: storeId ?? 'all',
+    title: title ?? '新しいチャット'
+  }
+
+  if (demoSessionId) {
+    insertData.demo_session_id = demoSessionId
+    insertData.user_id = null
+  } else {
+    insertData.user_id = userId
+    insertData.demo_session_id = null
+  }
+
+  console.log('📝 Insert data:', insertData)
+
+  try {
+    const { data, error } = await supabase!
+      .from('ai_conversations')
+      .insert(insertData)
+      .select()
+      .single()
+
+    console.log('✅ Conversation result:', { data, error })
+
+    if (error) {
+      console.error('Error creating conversation:', error)
+      return { data: null, error }
+    }
+
+    return { data, error: null }
+  } catch (err) {
+    console.error('Exception in createConversation:', err)
+    return { data: null, error: err as any }
+  }
 }
 
-export async function listConversations({ archived = false }: { archived?: boolean } = {}) {
+export async function listConversations({ archived = false, demoSessionId }: { archived?: boolean; demoSessionId?: string | null } = {}) {
   if (useMock()) {
     const all = readLS<Conversation[]>(LS_CONV, [])
     return {
@@ -75,13 +112,28 @@ export async function listConversations({ archived = false }: { archived?: boole
     }
   }
 
-  const { data, error } = await supabase!
-    .from('ai_conversations')
-    .select('*')
-    .eq('archived', archived)
-    .order('updated_at', { ascending: false })
+  try {
+    let query = supabase!
+      .from('ai_conversations')
+      .select('*')
+      .eq('archived', archived)
 
-  return { data, error }
+    if (demoSessionId) {
+      query = query.eq('demo_session_id', demoSessionId)
+    }
+
+    const { data, error } = await query.order('updated_at', { ascending: false })
+
+    if (error) {
+      console.error('Error listing conversations:', error)
+      return { data: [], error }
+    }
+
+    return { data, error: null }
+  } catch (err) {
+    console.error('Exception in listConversations:', err)
+    return { data: [], error: err as any }
+  }
 }
 
 export async function updateConversation(
@@ -120,13 +172,23 @@ export async function fetchMessages(conversationId: string) {
     }
   }
 
-  const { data, error } = await supabase!
-    .from('ai_messages')
-    .select('*')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true })
+  try {
+    const { data, error } = await supabase!
+      .from('ai_messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
 
-  return { data, error }
+    if (error) {
+      console.error('Error fetching messages:', error)
+      return { data: [], error }
+    }
+
+    return { data, error: null }
+  } catch (err) {
+    console.error('Exception in fetchMessages:', err)
+    return { data: [], error: err as any }
+  }
 }
 
 export async function addMessage(
@@ -158,11 +220,24 @@ export async function addMessage(
     return { data: msg, error: null }
   }
 
+  console.log('💬 Adding message:', { conversationId, role, contentLength: content.length })
+
+  // First verify the conversation exists and check its demo_session_id
+  const { data: conv, error: convError } = await supabase!
+    .from('ai_conversations')
+    .select('id, demo_session_id, user_id')
+    .eq('id', conversationId)
+    .maybeSingle()
+
+  console.log('🔍 Conversation check:', { conv, convError })
+
   const { data, error } = await supabase!
     .from('ai_messages')
     .insert({ conversation_id: conversationId, role, content, meta })
     .select()
     .single()
+
+  console.log('📝 Message insert result:', { data, error })
 
   if (!error) {
     await supabase!
@@ -174,7 +249,7 @@ export async function addMessage(
   return { data, error }
 }
 
-export async function searchConversations(q: string) {
+export async function searchConversations(q: string, demoSessionId?: string | null) {
   if (useMock()) {
     const msgs = readLS<Message[]>(LS_MSG, [])
     const convs = readLS<Conversation[]>(LS_CONV, [])
@@ -195,24 +270,38 @@ export async function searchConversations(q: string) {
     }
   }
 
-  const { data, error } = await supabase!.rpc('ai_search_messages', { q })
+  try {
+    const { data, error } = await supabase!.rpc('ai_search_messages', {
+      q,
+      p_demo_session_id: demoSessionId
+    })
 
-  if (error) {
-    return { data: [], error }
+    if (error) {
+      console.error('Error searching conversations:', error)
+      return { data: [], error }
+    }
+
+    const convIds = [...new Set(data?.map((d: any) => d.conversation_id) ?? [])]
+
+    if (convIds.length === 0) {
+      return { data: [], error: null }
+    }
+
+    const { data: convs } = await supabase!
+      .from('ai_conversations')
+      .select('id, title')
+      .in('id', convIds)
+
+    const results = data?.map((d: any) => ({
+      ...d,
+      title: convs?.find((c: any) => c.id === d.conversation_id)?.title ?? '（無題）'
+    }))
+
+    return { data: results || [], error: null }
+  } catch (err) {
+    console.error('Exception in searchConversations:', err)
+    return { data: [], error: err as any }
   }
-
-  const convIds = [...new Set(data?.map((d: any) => d.conversation_id) ?? [])]
-  const { data: convs } = await supabase!
-    .from('ai_conversations')
-    .select('id, title')
-    .in('id', convIds)
-
-  const results = data?.map((d: any) => ({
-    ...d,
-    title: convs?.find((c: any) => c.id === d.conversation_id)?.title ?? '（無題）'
-  }))
-
-  return { data: results, error: null }
 }
 
 export async function deleteConversation(id: string) {

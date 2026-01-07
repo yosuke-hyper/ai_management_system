@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, Settings, LogOut, Menu, ChevronDown } from 'lucide-react';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface HeaderProps {
   onToggleSidebar: () => void;

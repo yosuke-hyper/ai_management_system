@@ -81,20 +81,44 @@ export function useAIReports(storeId?: string) {
       setLoading(true);
       setError(null);
 
-      let query = supabase
-        .from('ai_generated_reports')
-        .select('*')
-        .order('generated_at', { ascending: false });
+      // Check if in demo mode
+      const demoSessionId = typeof window !== 'undefined' ? localStorage.getItem('demo_session_id') : null;
+      const isDemo = !!demoSessionId;
 
-      if (storeId) {
-        query = query.eq('store_id', storeId);
+      if (isDemo && demoSessionId) {
+        // Fetch from demo_ai_reports table
+        let query = supabase
+          .from('demo_ai_reports')
+          .select('*')
+          .eq('demo_session_id', demoSessionId)
+          .order('generated_at', { ascending: false });
+
+        if (storeId && storeId !== 'all') {
+          query = query.eq('store_id', storeId);
+        }
+
+        const { data, error: fetchError } = await query;
+
+        if (fetchError) throw fetchError;
+
+        setReports(data || []);
+      } else {
+        // Fetch from production ai_generated_reports table
+        let query = supabase
+          .from('ai_generated_reports')
+          .select('*')
+          .order('generated_at', { ascending: false });
+
+        if (storeId) {
+          query = query.eq('store_id', storeId);
+        }
+
+        const { data, error: fetchError } = await query;
+
+        if (fetchError) throw fetchError;
+
+        setReports(data || []);
       }
-
-      const { data, error: fetchError } = await query;
-
-      if (fetchError) throw fetchError;
-
-      setReports(data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch reports');
     } finally {
@@ -103,19 +127,39 @@ export function useAIReports(storeId?: string) {
   };
 
   const deleteReport = async (reportId: string) => {
-    try {
-      const { error: deleteError } = await supabase
-        .from('ai_generated_reports')
-        .delete()
-        .eq('id', reportId);
+    console.log('🗑️ Starting delete process for report:', reportId);
 
-      if (deleteError) throw deleteError;
+    // Check if in demo mode
+    const demoSessionId = typeof window !== 'undefined' ? localStorage.getItem('demo_session_id') : null;
+    const isDemo = !!demoSessionId;
 
-      await fetchReports();
-      return { error: null };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Failed to delete report' };
+    const tableName = isDemo ? 'demo_ai_reports' : 'ai_generated_reports';
+    console.log('📊 Using table:', tableName, 'Demo mode:', isDemo);
+
+    // Get current user info for debugging
+    const { data: { user } } = await supabase.auth.getUser();
+    console.log('👤 Current user:', user?.id);
+
+    const { data, error: deleteError } = await supabase
+      .from(tableName)
+      .delete()
+      .eq('id', reportId)
+      .select();
+
+    console.log('📤 Delete response:', { data, error: deleteError });
+
+    if (deleteError) {
+      console.error('❌ Delete error:', deleteError);
+      throw new Error(deleteError.message || 'Failed to delete report');
     }
+
+    if (!data || data.length === 0) {
+      console.warn('⚠️ No rows deleted - possible permission issue');
+      throw new Error('削除に失敗しました。レポートを削除する権限がありません。管理者またはマネージャーの権限が必要です。');
+    }
+
+    console.log('✅ Delete successful');
+    await fetchReports();
   };
 
   useEffect(() => {
@@ -256,9 +300,13 @@ export async function generateReport(
   periodEnd?: string
 ) {
   try {
+    // Check if demo session
+    const demoSessionId = typeof window !== 'undefined' ? localStorage.getItem('demo_session_id') : null;
+    const isDemo = !!demoSessionId;
+
     const { data: { session } } = await supabase.auth.getSession();
 
-    if (!session) {
+    if (!session && !isDemo) {
       throw new Error('Not authenticated');
     }
 
@@ -268,13 +316,14 @@ export async function generateReport(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
+        'Authorization': `Bearer ${session?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({
         reportType,
         storeId: storeId || null,
         periodStart: periodStart || null,
         periodEnd: periodEnd || null,
+        ...(isDemo && demoSessionId ? { demo_session_id: demoSessionId } : {}),
       }),
     });
 

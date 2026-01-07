@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { DailyReportData } from '@/types'
 import { formatCurrency } from '@/lib/format'
 
-export const CalendarHeatmap: React.FC<{ reports: DailyReportData[] }> = ({ reports }) => {
+const CalendarHeatmapComponent: React.FC<{ reports: DailyReportData[] }> = ({ reports }) => {
   const now = new Date()
   const y = now.getFullYear()
   const m = now.getMonth() // 0-11
@@ -70,3 +70,5 @@ export const CalendarHeatmap: React.FC<{ reports: DailyReportData[] }> = ({ repo
     </Card>
   )
 }
+
+export const CalendarHeatmap = React.memo(CalendarHeatmapComponent)

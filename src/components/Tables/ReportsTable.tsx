@@ -2,13 +2,24 @@ import React, { useState, useMemo } from 'react';
 import { DailyReport } from '../../types';
 import { formatDate, formatCurrency, calculateTotalExpenses, calculateOperatingProfit } from '../../utils/calculations';
 import { Eye, Edit, Trash2, Search, SortAsc, SortDesc, ChevronLeft, ChevronRight, Filter, Calendar, Store } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { useReportEdit } from '../../hooks/useReportEdit';
+import { EditReportModal } from '../Reports/EditReportModal';
+import { deleteDailyReport } from '../../services/supabase';
+import toast from 'react-hot-toast';
 
 interface ReportsTableProps {
   reports: DailyReport[];
   stores: Array<{ id: string; name: string; }>;
+  onReportUpdate?: () => void;
+  autoReloadAfterDelete?: boolean;
 }
 
-export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) => {
+export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores, onReportUpdate, autoReloadAfterDelete = true }) => {
+  const { profile } = useAuth();
+  const { updateReport } = useReportEdit();
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null);
+  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
@@ -20,6 +31,78 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const reportsPerPage = 15;
+
+  const canEditReport = (report: DailyReport): boolean => {
+    if (!profile) return false;
+
+    if (profile.role === 'admin' || profile.role === 'owner') {
+      return true;
+    }
+
+    if (profile.role === 'manager') {
+      return true;
+    }
+
+    if (profile.role === 'staff') {
+      return report.userId === profile.id;
+    }
+
+    return false;
+  };
+
+  const handleSaveReport = async (reportId: string, updates: Record<string, any>) => {
+    const success = await updateReport(reportId, updates);
+    if (success) {
+      setEditingReport(null);
+      if (onReportUpdate) {
+        onReportUpdate();
+      }
+    }
+  };
+
+  const handleEditClick = (report: DailyReport) => {
+    setEditingReport(report);
+  };
+
+  const handleCloseModal = () => {
+    setEditingReport(null);
+  };
+
+  const handleDeleteReport = async (reportId: string, reportDate: string) => {
+    const confirmMessage = `${formatDate(reportDate)}の日報を削除しますか？この操作は取り消せません。`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setDeletingReportId(reportId);
+
+    try {
+      const { error } = await deleteDailyReport(reportId);
+
+      if (error) {
+        toast.error('日報の削除に失敗しました');
+        console.error('Delete error:', error);
+      } else {
+        toast.success('日報を削除しました');
+
+        if (onReportUpdate) {
+          onReportUpdate();
+        }
+
+        if (autoReloadAfterDelete) {
+          setTimeout(() => {
+            window.location.reload();
+          }, 1000);
+        }
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error('日報の削除中にエラーが発生しました');
+    } finally {
+      setDeletingReportId(null);
+    }
+  };
 
   // 利用可能な月のリストを生成
   const availableMonths = useMemo(() => {
@@ -157,14 +240,14 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
             <h3 className="text-lg font-semibold text-gray-900">日次報告一覧</h3>
             
             {/* 検索バー */}
-            <div className="relative">
+            <div className="relative w-full sm:w-64">
               <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="スタッフ名、メモで検索..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full"
               />
             </div>
           </div>
@@ -177,7 +260,7 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
               <select
                 value={selectedStoreId}
                 onChange={(e) => setSelectedStoreId(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-40"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-40"
               >
                 <option value="all">（全店舗）</option>
                 {stores.map((store) => (
@@ -194,7 +277,7 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
               <select
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-32"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-32"
               >
                 {availableMonths.map((month) => (
                   <option key={month.value} value={month.value}>
@@ -220,26 +303,26 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
           </div>
 
           {/* 集計サマリー */}
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="grid grid-cols-4 gap-4 text-center">
+          <div className="bg-gray-50 rounded-lg p-3 sm:p-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-center">
               <div>
                 <p className="text-xs text-gray-600 mb-1">売上合計</p>
-                <p className="text-lg font-bold text-blue-600">{formatCurrency(summary.totalSales)}</p>
+                <p className="text-base sm:text-lg font-bold text-blue-600">{formatCurrency(summary.totalSales)}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-600 mb-1">経費合計</p>
-                <p className="text-lg font-bold text-red-600">{formatCurrency(summary.totalExpenses)}</p>
+                <p className="text-base sm:text-lg font-bold text-red-600">{formatCurrency(summary.totalExpenses)}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-600 mb-1">営業利益</p>
-                <p className={`text-lg font-bold ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <p className={`text-base sm:text-lg font-bold ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {formatCurrency(summary.totalProfit)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-gray-600 mb-1">平均利益率</p>
-                <p className={`text-lg font-bold ${
-                  summary.avgProfitMargin >= 15 ? 'text-green-600' : 
+                <p className={`text-base sm:text-lg font-bold ${
+                  summary.avgProfitMargin >= 15 ? 'text-green-600' :
                   summary.avgProfitMargin >= 10 ? 'text-yellow-600' : 'text-red-600'
                 }`}>
                   {summary.avgProfitMargin.toFixed(1)}%
@@ -266,11 +349,11 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
       
       {/* テーブル */}
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[640px]">
           <thead className="bg-gray-50">
             <tr>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th
+                className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('date')}
               >
                 <div className="flex items-center">
@@ -278,8 +361,8 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
                   <SortIcon field="date" />
                 </div>
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th
+                className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('storeName')}
               >
                 <div className="flex items-center">
@@ -287,11 +370,11 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
                   <SortIcon field="storeName" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 スタッフ
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th
+                className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('sales')}
               >
                 <div className="flex items-center">
@@ -299,11 +382,10 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
                   <SortIcon field="sales" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 経費合計
               </th>
-              <th 
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              <th className="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort('profit')}
               >
                 <div className="flex items-center">
@@ -311,10 +393,10 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
                   <SortIcon field="profit" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 利益率
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 操作
               </th>
             </tr>
@@ -324,56 +406,72 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
               const totalExpenses = calculateTotalExpenses(report);
               const operatingProfit = calculateOperatingProfit(report.sales, totalExpenses);
               const profitMargin = (operatingProfit / report.sales) * 100;
-              
+
               return (
                 <tr key={report.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {formatDate(report.date)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
                       {report.storeName}
                     </div>
+                    {/* モバイル時に追加情報を表示 */}
+                    <div className="md:hidden mt-1 space-y-0.5">
+                      <div className="text-xs text-gray-600">
+                        {report.staffName}
+                      </div>
+                      <div className={`text-xs font-medium ${operatingProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        利益: {formatCurrency(operatingProfit)}
+                      </div>
+                    </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="hidden md:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {report.staffName}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {formatCurrency(report.sales)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {formatCurrency(totalExpenses)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="hidden md:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     <span className={operatingProfit >= 0 ? 'text-green-600' : 'text-red-600'}>
                       {formatCurrency(operatingProfit)}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     <span className={profitMargin >= 15 ? 'text-green-600' : profitMargin >= 10 ? 'text-yellow-600' : 'text-red-600'}>
                       {profitMargin.toFixed(1)}%
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <div className="flex items-center gap-2">
-                      <button 
-                        className="text-blue-600 hover:text-blue-800 transition-colors p-1 rounded hover:bg-blue-50"
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <div className="flex items-center gap-1 sm:gap-2">
+                      <button
+                        className="text-blue-600 hover:text-blue-800 transition-colors p-2 rounded hover:bg-blue-50"
                         title="詳細表示"
                       >
-                        <Eye className="w-4 h-4" />
+                        <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
-                      <button 
-                        className="text-green-600 hover:text-green-800 transition-colors p-1 rounded hover:bg-green-50"
-                        title="編集"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button 
-                        className="text-red-600 hover:text-red-800 transition-colors p-1 rounded hover:bg-red-50"
-                        title="削除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canEditReport(report) && (
+                        <button
+                          className="text-green-600 hover:text-green-800 transition-colors p-2 rounded hover:bg-green-50"
+                          title="編集"
+                          onClick={() => handleEditClick(report)}
+                        >
+                          <Edit className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                      )}
+                      {(profile?.role === 'admin' || profile?.role === 'owner') && (
+                        <button
+                          className="text-red-600 hover:text-red-800 transition-colors p-2 rounded hover:bg-red-50 hidden sm:block disabled:opacity-50"
+                          title="削除"
+                          onClick={() => handleDeleteReport(report.id, report.date)}
+                          disabled={deletingReportId === report.id}
+                        >
+                          <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -417,6 +515,16 @@ export const ReportsTable: React.FC<ReportsTableProps> = ({ reports, stores }) =
           <h3 className="text-lg font-medium text-gray-900 mb-2">該当する報告がありません</h3>
           <p className="text-gray-500">検索条件やフィルタを変更してください。</p>
         </div>
+      )}
+
+      {/* 編集モーダル */}
+      {editingReport && (
+        <EditReportModal
+          report={editingReport}
+          isOpen={true}
+          onClose={handleCloseModal}
+          onSave={handleSaveReport}
+        />
       )}
     </div>
   );

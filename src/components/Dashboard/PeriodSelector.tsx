@@ -28,7 +28,7 @@ export const PeriodSelector: React.FC<PeriodSelectorProps> = ({
   onRangeChange
 }) => {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-tour="period-selector">
       {/* 分析単位選択 */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">分析単位</label>

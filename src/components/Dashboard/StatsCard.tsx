@@ -19,7 +19,7 @@ const colorClasses = {
   yellow: 'bg-yellow-50 text-yellow-700'
 };
 
-export const StatsCard: React.FC<StatsCardProps> = ({
+export const StatsCard: React.FC<StatsCardProps> = React.memo(({
   title,
   value,
   icon: IconComponent,
@@ -27,21 +27,21 @@ export const StatsCard: React.FC<StatsCardProps> = ({
   color = 'blue'
 }) => {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow duration-200">
+    <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-lg transition-shadow duration-200">
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-600 mb-1">{title}</p>
-          <p className="text-2xl font-bold text-gray-900">{value}</p>
+        <div className="min-w-0 flex-1 mr-3">
+          <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1 truncate">{title}</p>
+          <p className="text-lg sm:text-2xl font-bold text-gray-900 truncate">{value}</p>
           {trend && (
-            <p className={`text-sm mt-1 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+            <p className={`text-xs sm:text-sm mt-1 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
               {trend.isPositive ? '↗' : '↘'} {Math.abs(trend.value)}%
             </p>
           )}
         </div>
-        <div className={`p-3 rounded-lg ${colorClasses[color]}`}>
-          <IconComponent className="w-6 h-6" />
+        <div className={`p-2 sm:p-3 rounded-lg ${colorClasses[color]} flex-shrink-0`}>
+          <IconComponent className="w-5 h-5 sm:w-6 sm:h-6" />
         </div>
       </div>
     </div>
   );
-};
+});

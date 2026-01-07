@@ -6,6 +6,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { avatarToast } from '../../lib/avatarToast';
 
 interface AIReportDetailProps {
   report: AIReport;
@@ -90,10 +91,16 @@ export function AIReportDetail({ report, onBack, onDelete }: AIReportDetailProps
     }
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(shareLink);
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+      avatarToast.success('コピーしました');
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      avatarToast.error('コピーできませんでした');
+    }
   };
 
   const handleExport = () => {
@@ -319,14 +326,14 @@ ${Object.entries(report.analysis_content || {}).map(([key, value]) => `\n■ ${k
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="text-sm text-gray-600 mb-1">総売上</div>
             <div className="text-2xl font-bold text-blue-600">
-              ¥{report.metrics.totalSales.toLocaleString('ja-JP')}
+              ¥{Math.round(report.metrics.totalSales).toLocaleString('ja-JP')}
             </div>
           </div>
 
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="text-sm text-gray-600 mb-1">粗利益</div>
             <div className="text-2xl font-bold text-green-600">
-              ¥{report.metrics.grossProfit.toLocaleString('ja-JP')}
+              ¥{Math.round(report.metrics.grossProfit).toLocaleString('ja-JP')}
             </div>
           </div>
 
@@ -352,6 +359,102 @@ ${Object.entries(report.analysis_content || {}).map(([key, value]) => `\n■ ${k
           </div>
         </div>
 
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">
+            損益計算書（P/L）
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="divide-y divide-gray-200">
+              <div className="p-4 bg-blue-50">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-gray-900">売上高</span>
+                  <span className="text-xl font-bold text-blue-600">
+                    ¥{Math.round(report.metrics.totalSales).toLocaleString('ja-JP')}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  100.0%
+                </div>
+              </div>
+
+              <div className="p-4 pl-8 bg-gray-50">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-700">売上原価</span>
+                  <span className="font-medium text-red-600">
+                    (¥{Math.round(report.metrics.totalSales - report.metrics.grossProfit).toLocaleString('ja-JP')})
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {report.metrics.costRate.toFixed(1)}%
+                </div>
+              </div>
+
+              <div className="p-4 bg-green-50">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-gray-900">売上総利益（粗利益）</span>
+                  <span className="text-xl font-bold text-green-600">
+                    ¥{Math.round(report.metrics.grossProfit).toLocaleString('ja-JP')}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {((report.metrics.grossProfit / report.metrics.totalSales) * 100).toFixed(1)}%
+                </div>
+              </div>
+
+              <div className="p-4 pl-8">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-700">販売費及び一般管理費</span>
+                  <span className="font-medium text-red-600">
+                    (¥{Math.round(report.metrics.totalExpenses - (report.metrics.totalSales - report.metrics.grossProfit)).toLocaleString('ja-JP')})
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1 ml-4">
+                  <div className="space-y-1">
+                    <div>人件費: {report.metrics.laborRate.toFixed(1)}%</div>
+                    <div>その他経費: {((report.metrics.totalExpenses - (report.metrics.totalSales - report.metrics.grossProfit) - (report.metrics.totalSales * report.metrics.laborRate / 100)) / report.metrics.totalSales * 100).toFixed(1)}%</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 bg-purple-50">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-gray-900">営業利益</span>
+                  <span className={`text-xl font-bold ${report.metrics.operatingProfit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
+                    {report.metrics.operatingProfit >= 0 ? '¥' : '-¥'}
+                    {Math.abs(Math.round(report.metrics.operatingProfit)).toLocaleString('ja-JP')}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {report.metrics.profitMargin.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t-2 border-slate-300">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">粗利益率</div>
+                  <div className="text-lg font-bold text-green-600">
+                    {((report.metrics.grossProfit / report.metrics.totalSales) * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">原価率</div>
+                  <div className="text-lg font-bold text-orange-600">
+                    {report.metrics.costRate.toFixed(1)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">人件費率</div>
+                  <div className="text-lg font-bold text-blue-600">
+                    {report.metrics.laborRate.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {report.metrics.storeBreakdown && report.metrics.storeBreakdown.length > 0 && (
           <div className="mb-8">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
@@ -365,7 +468,7 @@ ${Object.entries(report.analysis_content || {}).map(([key, value]) => `\n■ ${k
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">売上</span>
-                      <span className="font-medium">¥{store.sales.toLocaleString('ja-JP')}</span>
+                      <span className="font-medium">¥{Math.round(store.sales).toLocaleString('ja-JP')}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">営業利益</span>

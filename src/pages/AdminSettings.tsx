@@ -1,17 +1,36 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect, lazy, Suspense } from 'react'
 import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { useAdminData } from '@/contexts/AdminDataContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { useOrganization } from '@/contexts/OrganizationContext'
 import { formatCurrency } from '@/lib/format'
-import { PermissionGuard } from '@/components/Auth/PermissionGuard'
-import { type VendorDb } from '@/services/supabase'
+import { PermissionGuard } from '@/components/auth/PermissionGuard'
+import { type VendorDb, getBrands, getStores, getExpenseBaseline, type ExpenseBaselineDb } from '@/services/supabase'
+import { Database, DollarSign, Brain, Shield, Store, AlertCircle, Download, AlertTriangle, Calendar, Receipt, Target, Activity } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { subscriptionService } from '@/services/subscriptionService'
+import { SuperAdminBanner } from '@/components/Admin/SuperAdminBanner'
+import { OrganizationSwitcher } from '@/components/Admin/OrganizationSwitcher'
 import { insertSampleData } from '@/services/sampleData'
-import { Database, DollarSign, Brain, Shield } from 'lucide-react'
-import { ExpenseBaselineSettings } from '@/components/Dashboard/ExpenseBaselineSettings'
-import { AIUsageLimitManagement } from '@/components/Admin/AIUsageLimitManagement'
-import { AuditLogViewer } from '@/components/Admin/AuditLogViewer'
+
+const ExpenseBaselineSettings = lazy(() => import('@/components/Dashboard/ExpenseBaselineSettings').then(m => ({ default: m.ExpenseBaselineSettings })))
+const TargetSettings = lazy(() => import('@/components/Dashboard/TargetSettings').then(m => ({ default: m.TargetSettings })))
+const StoreAIUsageManagement = lazy(() => import('@/components/Admin/StoreAIUsageManagement').then(m => ({ default: m.StoreAIUsageManagement })))
+const AuditLogViewer = lazy(() => import('@/components/Admin/AuditLogViewer').then(m => ({ default: m.AuditLogViewer })))
+const BrandManagement = lazy(() => import('@/components/Admin/BrandManagement').then(m => ({ default: m.BrandManagement })))
+const ErrorLogViewer = lazy(() => import('@/components/Admin/ErrorLogViewer').then(m => ({ default: m.ErrorLogViewer })))
+const ErrorStatsDashboard = lazy(() => import('@/components/Admin/ErrorStatsDashboard').then(m => ({ default: m.ErrorStatsDashboard })))
+const RealtimeErrorMonitor = lazy(() => import('@/components/Admin/RealtimeErrorMonitor').then(m => ({ default: m.RealtimeErrorMonitor })))
+const DataExport = lazy(() => import('@/components/Data/DataExport').then(m => ({ default: m.DataExport })))
+const StoreHolidayManagement = lazy(() => import('@/components/Stores/StoreHolidayManagement').then(m => ({ default: m.StoreHolidayManagement })))
+const AdminActivityLogViewer = lazy(() => import('@/components/Admin/AdminActivityLogViewer').then(m => ({ default: m.AdminActivityLogViewer })))
+const SystemHealthDashboard = lazy(() => import('@/components/System/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
+const DemoDataManagement = lazy(() => import('@/components/Admin/DemoDataManagement').then(m => ({ default: m.DemoDataManagement })))
+const VendorAssignmentManager = lazy(() => import('@/components/Admin/VendorAssignmentManager').then(m => ({ default: m.VendorAssignmentManager })))
+const InlineVendorCategoryManager = lazy(() => import('@/components/Admin/InlineVendorCategoryManager').then(m => ({ default: m.InlineVendorCategoryManager })))
 
 type VendorForm = {
   name: string
@@ -20,27 +39,44 @@ type VendorForm = {
   is_active: boolean
 }
 
+interface StoreExpenseBaseline {
+  storeName: string
+  storeId: string
+  baseline: ExpenseBaselineDb | null
+  loading: boolean
+}
+
 export const AdminSettings: React.FC = () => {
-  const { 
+  const { organization } = useOrganization()
+  const { user, isDemoMode } = useAuth()
+  const {
     stores, targets, vendors, storeVendorAssignments,
     addStore, updateStore, deleteStore, upsertTarget, deleteTarget,
     addVendor, updateVendor, deleteVendor, getStoreVendors,
     assignVendorToStore, unassignVendorFromStore
   } = useAdminData()
+  const [showOrgSwitcher, setShowOrgSwitcher] = useState(false)
 
   const [storeForm, setStoreForm] = useState({
-    id: '', name: '', address: '', manager: '', isActive: true, editing: false
+    id: '', name: '', address: '', manager: '', brandId: '', changeFund: '', isActive: true, editing: false
   })
-  
+  const [brands, setBrands] = useState<any[]>([])
+  const [vendorCategories, setVendorCategories] = useState<any[]>([])
+  const [storeLimits, setStoreLimits] = useState<{
+    current: number;
+    contracted: number;
+    canAdd: boolean;
+  } | null>(null)
+
   const [vendorForm, setVendorForm] = useState<VendorForm & { id: string; editing: boolean }>({
     id: '',
     name: '',
-    category: 'others',
+    category: vendorCategories[0]?.id || 'others',
     contact_info: '',
     is_active: true,
     editing: false
   })
-  
+
   const [error, setError] = useState<string>('')
   const [sampleDataLoading, setSampleDataLoading] = useState(false)
   const [sampleDataMessage, setSampleDataMessage] = useState<string>('')
@@ -51,8 +87,94 @@ export const AdminSettings: React.FC = () => {
   })
 
   const [showExpenseBaselineModal, setShowExpenseBaselineModal] = useState(false)
+  const [showTargetSettingsModal, setShowTargetSettingsModal] = useState(false)
+  const [selectedHolidayStoreId, setSelectedHolidayStoreId] = useState<string>('')
+  const [expenseMonth, setExpenseMonth] = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [storeExpenses, setStoreExpenses] = useState<StoreExpenseBaseline[]>([])
+  const [loadingExpenses, setLoadingExpenses] = useState(false)
+
+  const loadVendorCategories = async () => {
+    if (!organization?.id) return
+
+    const { data: categoriesData } = await supabase
+      .from('vendor_categories')
+      .select('*')
+      .eq('organization_id', organization.id)
+      .eq('is_active', true)
+      .order('display_order')
+
+    setVendorCategories(categoriesData || [])
+  }
+
+  useEffect(() => {
+    const loadData = async () => {
+      if (!organization?.id) {
+        console.log('⚠️ AdminSettings: organization.idがありません')
+        return
+      }
+      console.log('🔍 AdminSettings: ブランド取得開始', { organizationId: organization.id })
+      const { data, error } = await getBrands({ organizationId: organization.id, isActive: true })
+      console.log('🔍 AdminSettings: ブランド取得結果', { data, error })
+      setBrands(data || [])
+
+      // 業者カテゴリを取得
+      await loadVendorCategories()
+
+      // 契約状況を取得
+      const limits = await subscriptionService.getSubscriptionLimits(organization.id)
+      if (limits) {
+        setStoreLimits({
+          current: limits.currentStores,
+          contracted: limits.contractedStores,
+          canAdd: limits.currentStores < limits.contractedStores
+        })
+      }
+    }
+    loadData()
+  }, [organization, stores.length])
+
+  useEffect(() => {
+    const loadExpenseBaselines = async () => {
+      setLoadingExpenses(true)
+      try {
+        const { data: storesData, error: storesError } = await getStores()
+
+        if (storesError || !storesData) {
+          setLoadingExpenses(false)
+          return
+        }
+
+        const expensePromises = storesData.map(async (store) => {
+          const { data: baseline } = await getExpenseBaseline(store.id, expenseMonth)
+          return {
+            storeName: store.name,
+            storeId: store.id,
+            baseline: baseline || null,
+            loading: false
+          }
+        })
+
+        const results = await Promise.all(expensePromises)
+        setStoreExpenses(results)
+      } catch (err) {
+        console.error('参考経費の取得に失敗:', err)
+      } finally {
+        setLoadingExpenses(false)
+      }
+    }
+
+    loadExpenseBaselines()
+  }, [expenseMonth])
 
   const handleInsertSampleData = async () => {
+    if (isDemoMode) {
+      setSampleDataMessage('デモモードでは実データの生成は行いません。ログイン後にお試しください。')
+      return
+    }
+
     if (!confirm('サンプルデータを投入します。既存のデータには影響しません。よろしいですか？')) {
       return
     }
@@ -60,27 +182,32 @@ export const AdminSettings: React.FC = () => {
     setSampleDataLoading(true)
     setSampleDataMessage('')
 
-    const result = await insertSampleData()
+    try {
+      const result = await insertSampleData()
 
-    setSampleDataLoading(false)
-    setSampleDataMessage(result.message)
+      setSampleDataLoading(false)
+      setSampleDataMessage(result.message)
 
-    if (result.success) {
-      alert(`${result.message}\n\nページをリロードしてデータを確認してください。`)
-      window.location.reload()
-    } else {
-      alert(result.message)
+      if (result.success) {
+        alert(`${result.message}\n\nデータが投入されました。ダッシュボードで確認してください。`)
+      } else {
+        alert(`${result.message}\n\nSupabase接続時: 権限（admin）やRLSポリシーを確認してください。\nローカルモード: ブラウザのストレージ設定を確認してください。`)
+      }
+    } catch (e: any) {
+      setSampleDataLoading(false)
+      setSampleDataMessage('エラーが発生しました')
+      alert(`エラー: ${e?.message ?? '不明なエラー'}`)
     }
   }
 
-  const resetStoreForm = () => setStoreForm({ id:'', name:'', address:'', manager:'', isActive:true, editing:false })
-  const resetVendorForm = () => setVendorForm({ 
-    id: '', 
-    name: '', 
-    category: 'others', 
-    contact_info: '', 
-    is_active: true, 
-    editing: false 
+  const resetStoreForm = () => setStoreForm({ id:'', name:'', address:'', manager:'', brandId:'', changeFund:'', isActive:true, editing:false })
+  const resetVendorForm = () => setVendorForm({
+    id: '',
+    name: '',
+    category: vendorCategories[0]?.id || 'others',
+    contact_info: '',
+    is_active: true,
+    editing: false
   })
 
   // 安全な onChange ハンドラ
@@ -90,14 +217,42 @@ export const AdminSettings: React.FC = () => {
       setVendorForm(prev => ({ ...prev, [key]: value }))
     }
   
-  const onSubmitStore = () => {
-    if (!(storeForm.name ?? '').trim()) return
-    if (storeForm.editing && storeForm.id) {
-      updateStore(storeForm.id, { name: storeForm.name, address: storeForm.address, manager: storeForm.manager, isActive: storeForm.isActive })
-    } else {
-      addStore({ id: storeForm.id || undefined, name: storeForm.name, address: storeForm.address, manager: storeForm.manager, isActive: storeForm.isActive })
+  const onSubmitStore = async () => {
+    if (!(storeForm.name ?? '').trim()) {
+      return { ok: false, error: '店舗名を入力してください' }
     }
-    resetStoreForm()
+
+    try {
+      if (storeForm.editing && storeForm.id) {
+        await updateStore(storeForm.id, {
+          name: storeForm.name,
+          address: storeForm.address,
+          manager: storeForm.manager,
+          brandId: storeForm.brandId || undefined,
+          changeFund: storeForm.changeFund ? parseInt(storeForm.changeFund, 10) : undefined,
+          isActive: storeForm.isActive
+        })
+        resetStoreForm()
+        return { ok: true }
+      } else {
+        const result = await addStore({
+          name: storeForm.name,
+          address: storeForm.address,
+          manager: storeForm.manager,
+          brandId: storeForm.brandId || undefined,
+          changeFund: storeForm.changeFund ? parseInt(storeForm.changeFund, 10) : undefined,
+          isActive: storeForm.isActive
+        })
+
+        if (result.ok) {
+          resetStoreForm()
+        }
+        return result
+      }
+    } catch (err) {
+      console.error('❌ onSubmitStore: エラー:', err)
+      return { ok: false, error: err instanceof Error ? err.message : '店舗の保存に失敗しました' }
+    }
   }
 
   const onSubmitVendor = async () => {
@@ -163,6 +318,7 @@ export const AdminSettings: React.FC = () => {
     targetLaborRate: 25
   })
   const [targetStatus, setTargetStatus] = useState<{ success: boolean; message: string } | null>(null)
+  const [targetFilterPeriod, setTargetFilterPeriod] = useState<string>('all')
   const selectedStoreName = useMemo(() => stores.find(s => s.id === targetForm.storeId)?.name ?? '', [stores, targetForm.storeId])
   const onSubmitTarget = async () => {
     if (!targetForm.storeId || !targetForm.period) {
@@ -208,76 +364,229 @@ export const AdminSettings: React.FC = () => {
     }
   }
 
-  const categoryLabels = {
-    vegetable_meat: '野菜・肉類',
-    seafood: '魚介類',
-    alcohol: '酒類',
-    rice: '米穀',
-    seasoning: '調味料',
-    frozen: '冷凍食品',
-    dessert: '製菓・デザート',
-    others: 'その他'
-  }
+  const categoryLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    vendorCategories.forEach((cat: any) => {
+      labels[cat.id] = cat.name
+    })
+    return labels
+  }, [vendorCategories])
 
   return (
     <PermissionGuard requiredRole="manager">
     <div className="space-y-6">
+      {/* スーパー管理者バナー */}
+      {user?.isSuperAdmin && (
+        <SuperAdminBanner
+          organizationName={organization?.name}
+          onSwitchOrganization={() => setShowOrgSwitcher(!showOrgSwitcher)}
+        />
+      )}
+
       <div>
         <h1 className="text-2xl font-bold text-foreground">設定（管理）</h1>
-        <p className="text-sm text-muted-foreground">店舗情報、業者管理、月次目標の設定を行います。</p>
+        <p className="text-sm text-muted-foreground">店舗情報、業者管理、月次目標、システム設定を行います。</p>
       </div>
 
-      <Tabs defaultValue="stores">
+      <Tabs defaultValue="store-management">
         <TabsList>
-          <TabsTrigger value="stores">店舗</TabsTrigger>
-          <TabsTrigger value="vendors">業者</TabsTrigger>
-          <TabsTrigger value="targets">月次目標</TabsTrigger>
-          <TabsTrigger value="audit-logs">
-            <Shield className="w-4 h-4 mr-2" />
-            監査ログ
+          <TabsTrigger value="store-management">
+            <Store className="w-4 h-4 mr-2" />
+            店舗管理
           </TabsTrigger>
-          <TabsTrigger value="expense-baseline">参考経費</TabsTrigger>
-          <TabsTrigger value="ai-limits">AI使用制限</TabsTrigger>
+          <TabsTrigger value="system-settings">
+            <Database className="w-4 h-4 mr-2" />
+            システム設定
+          </TabsTrigger>
         </TabsList>
 
-        {/* サンプルデータ投入 */}
-        {stores.length === 0 && (
-          <Card className="mt-4 bg-blue-50 border-blue-200">
-            <CardContent className="pt-6">
-              <div className="flex items-start gap-4">
-                <Database className="h-8 w-8 text-blue-600 flex-shrink-0 mt-1" />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-blue-900 mb-2">初めてご利用の方へ</h3>
-                  <p className="text-sm text-blue-800 mb-4">
-                    店舗・業者・目標値のサンプルデータを一括で投入できます。
-                    システムの動作確認やテストにご利用ください。
-                  </p>
-                  <Button
-                    onClick={handleInsertSampleData}
-                    disabled={sampleDataLoading}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    <Database className="h-4 w-4 mr-2" />
-                    {sampleDataLoading ? 'データ投入中...' : 'サンプルデータを投入'}
-                  </Button>
-                  {sampleDataMessage && (
-                    <p className="text-sm text-blue-700 mt-3">{sampleDataMessage}</p>
+        {/* 店舗管理タブ */}
+        <TabsContent value="store-management" className="mt-4">
+          <Tabs defaultValue="stores">
+            <TabsList>
+              <TabsTrigger value="stores">
+                <Store className="w-4 h-4 mr-2" />
+                店舗登録
+              </TabsTrigger>
+              <TabsTrigger value="holidays">
+                <Calendar className="w-4 h-4 mr-2" />
+                休日設定
+              </TabsTrigger>
+              <TabsTrigger value="brands">
+                業態管理
+              </TabsTrigger>
+              <TabsTrigger value="vendors">業者</TabsTrigger>
+              <TabsTrigger value="targets">月次目標</TabsTrigger>
+              <TabsTrigger value="expense-baseline">参考経費</TabsTrigger>
+            </TabsList>
+
+            {/* サンプルデータ投入 */}
+            {stores.length === 0 && (
+              <Card className="mt-4 bg-blue-50 border-blue-200">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-4">
+                    <Database className="h-8 w-8 text-blue-600 flex-shrink-0 mt-1" />
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-blue-900 mb-2">初めてご利用の方へ</h3>
+                      <p className="text-sm text-blue-800 mb-4">
+                        店舗・業者・目標値のサンプルデータを一括で投入できます。
+                        システムの動作確認やテストにご利用ください。
+                      </p>
+                      <Button
+                        onClick={handleInsertSampleData}
+                        disabled={sampleDataLoading}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Database className="h-4 w-4 mr-2" />
+                        {sampleDataLoading ? 'データ投入中...' : 'サンプルデータを投入'}
+                      </Button>
+                      {sampleDataMessage && (
+                        <p className="text-sm text-blue-700 mt-3">{sampleDataMessage}</p>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <TabsContent value="brands" className="mt-4">
+              <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                <BrandManagement />
+              </Suspense>
+            </TabsContent>
+
+        <TabsContent value="holidays" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Panel: Store List */}
+            <div className="lg:col-span-1">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Store className="w-5 h-5" />
+                    店舗一覧
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 max-h-[600px] overflow-y-auto">
+                  {stores.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Store className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p className="text-sm">店舗が登録されていません</p>
+                    </div>
+                  ) : (
+                    stores.map((store) => (
+                      <button
+                        key={store.id}
+                        onClick={() => setSelectedHolidayStoreId(store.id)}
+                        className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                          selectedHolidayStoreId === store.id
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="font-medium text-sm mb-1">{store.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {store.address || '住所未設定'}
+                        </div>
+                        {store.brand_id && brands.find(b => b.id === store.brand_id) && (
+                          <Badge variant="outline" className="text-xs mt-2">
+                            {brands.find(b => b.id === store.brand_id)?.icon}{' '}
+                            {brands.find(b => b.id === store.brand_id)?.name}
+                          </Badge>
+                        )}
+                      </button>
+                    ))
                   )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Right Panel: Holiday Settings */}
+            <div className="lg:col-span-2">
+              {selectedHolidayStoreId && organization ? (
+                <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                  <StoreHolidayManagement
+                    storeId={selectedHolidayStoreId}
+                    storeName={stores.find(s => s.id === selectedHolidayStoreId)?.name || ''}
+                    organizationId={organization.id}
+                    inline={true}
+                  />
+                </Suspense>
+              ) : (
+                <Card>
+                  <CardContent className="py-16">
+                    <div className="text-center text-muted-foreground">
+                      <Calendar className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                      <p className="text-lg font-medium mb-2">店舗を選択してください</p>
+                      <p className="text-sm">
+                        左側の店舗一覧から店舗を選択すると、休日設定を表示・編集できます
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        </TabsContent>
 
         <TabsContent value="stores" className="mt-4">
+          {storeLimits && (
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Store className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">契約店舗数の状況</p>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        現在の登録店舗数: <span className="font-semibold">{storeLimits.current}</span> /
+                        契約上限: <span className="font-semibold">{storeLimits.contracted}</span>店舗
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {storeLimits.canAdd ? (
+                      <Badge className="bg-green-600 text-white">
+                        残り {storeLimits.contracted - storeLimits.current}店舗登録可能
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-red-600 text-white flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        上限到達
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {!storeLimits.canAdd && (
+                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-xs text-yellow-900">
+                      店舗を追加するには、組織設定から契約店舗数を増やしてください。
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
-              <CardHeader><CardTitle>店舗の登録/編集</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>店舗の登録/編集</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm">店舗名</label>
                   <input className="w-full border border-input rounded-md px-3 py-2 bg-background"
                     value={storeForm.name} onChange={(e)=>setStoreForm(s=>({...s,name:e.target.value}))}/>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm">業態</label>
+                  <select className="w-full border border-input rounded-md px-3 py-2 bg-background"
+                    value={storeForm.brandId}
+                    onChange={(e)=>setStoreForm(s=>({...s,brandId:e.target.value}))}>
+                    <option value="">業態未設定</option>
+                    {brands.map(b=>(
+                      <option key={b.id} value={b.id}>{b.icon} {b.display_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm">住所</label>
@@ -289,13 +598,30 @@ export const AdminSettings: React.FC = () => {
                   <input className="w-full border border-input rounded-md px-3 py-2 bg-background"
                     value={storeForm.manager} onChange={(e)=>setStoreForm(s=>({...s,manager:e.target.value}))}/>
                 </div>
+                <div className="space-y-2">
+                  <label className="text-sm">釣銭準備金（円）</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    className="w-full border border-input rounded-md px-3 py-2 bg-background"
+                    value={storeForm.changeFund}
+                    onChange={(e)=>setStoreForm(s=>({...s,changeFund:e.target.value}))}
+                    placeholder="例：50000"/>
+                  <p className="text-xs text-muted-foreground">店舗で保持する釣銭用の現金準備金</p>
+                </div>
                 <div className="flex items-center gap-2">
                   <input id="active" type="checkbox" checked={storeForm.isActive}
                     onChange={(e)=>setStoreForm(s=>({...s,isActive:e.target.checked}))}/>
                   <label htmlFor="active" className="text-sm">稼働中</label>
                 </div>
                 <div className="flex gap-2">
-                  <Button onClick={onSubmitStore}>{storeForm.editing ? '更新' : '登録'}</Button>
+                  <Button
+                    onClick={onSubmitStore}
+                    disabled={!storeForm.editing && storeLimits && !storeLimits.canAdd}
+                  >
+                    {storeForm.editing ? '更新' : '登録'}
+                  </Button>
                   <Button variant="outline" onClick={resetStoreForm}>クリア</Button>
                 </div>
               </CardContent>
@@ -307,13 +633,20 @@ export const AdminSettings: React.FC = () => {
                 {stores.map(s=>(
                   <div key={s.id} className="flex items-center justify-between border border-border rounded-md px-3 py-2">
                     <div className="text-sm">
-                      <div className="font-medium">{s.name}</div>
+                      <div className="font-medium flex items-center gap-2">
+                        {s.name}
+                        {s.brand_id && brands.find(b=>b.id===s.brand_id) && (
+                          <Badge variant="outline" className="text-xs">
+                            {brands.find(b=>b.id===s.brand_id)?.icon} {brands.find(b=>b.id===s.brand_id)?.name}
+                          </Badge>
+                        )}
+                      </div>
                       <div className="text-muted-foreground">{s.address} / {s.manager}</div>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant={s.isActive ? 'default' : 'secondary'}>{s.isActive ? '稼働' : '停止'}</Badge>
                       <Button variant="outline" size="sm"
-                        onClick={()=>setStoreForm({ id:s.id, name:s.name, address:s.address, manager:s.manager, isActive:s.isActive, editing:true })}>
+                        onClick={()=>setStoreForm({ id:s.id, name:s.name, address:s.address, manager:s.manager, brandId:s.brand_id||'', changeFund:(s as any).change_fund ? String((s as any).change_fund) : '', isActive:s.isActive, editing:true })}>
                         編集
                       </Button>
                       <Button variant="destructive" size="sm" onClick={()=>deleteStore(s.id)}>削除</Button>
@@ -327,6 +660,11 @@ export const AdminSettings: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="vendors" className="mt-4">
+          {/* カテゴリ管理セクション */}
+          <Suspense fallback={<div className="flex items-center justify-center p-4">読み込み中...</div>}>
+            <InlineVendorCategoryManager onCategoryChange={loadVendorCategories} />
+          </Suspense>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader><CardTitle>業者の登録/編集</CardTitle></CardHeader>
@@ -346,11 +684,15 @@ export const AdminSettings: React.FC = () => {
                 <div className="space-y-2">
                   <label className="text-sm">カテゴリ</label>
                   <select className="w-full border border-input rounded-md px-3 py-2 bg-background"
-                    value={vendorForm.category} 
+                    value={vendorForm.category}
                     onChange={handleVendorFormChange('category')}>
-                    {Object.entries(categoryLabels).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
+                    {vendorCategories.length === 0 ? (
+                      <option value="others">その他</option>
+                    ) : (
+                      vendorCategories.map((cat: any) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))
+                    )}
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -483,153 +825,50 @@ export const AdminSettings: React.FC = () => {
             </Card>
           </div>
 
-          {/* 店舗別業者割り当て */}
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>店舗別業者割り当て</CardTitle>
-              <div className="text-sm text-muted-foreground mt-2">
-                📋 <strong>手順：</strong>
-                <ol className="list-decimal list-inside mt-1 space-y-1">
-                  <li>下から店舗を選択</li>
-                  <li>右側の「未割り当て業者」から「追加」で割り当て</li>
-                  <li>左側の「割り当て済み」から「削除」で解除</li>
-                </ol>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm">店舗選択</label>
-                <select 
-                  value={assignmentForm.selectedStoreId}
-                  onChange={(e)=>setAssignmentForm(f=>({...f, selectedStoreId:e.target.value}))}
-                  className="w-full border border-input rounded-md px-3 py-2 bg-background text-base min-h-[44px]">
-                  <option value="">選択してください</option>
-                  {stores.map(s=>(
-                    <option key={s.id} value={s.id}>🏪 {s.name}</option>
-                  ))}
-                </select>
-                {!assignmentForm.selectedStoreId && (
-                  <p className="text-xs text-blue-600">👆 まず店舗を選択してください</p>
-                )}
-              </div>
-
-              {assignmentForm.selectedStoreId && (
-                <>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                  <p className="text-sm text-blue-800">
-                    📍 <strong>{stores.find(s => s.id === assignmentForm.selectedStoreId)?.name}</strong> の業者管理
-                  </p>
-                  <p className="text-xs text-blue-600 mt-1">
-                    現在 {getStoreVendors(assignmentForm.selectedStoreId).length}業者 / 全{vendors.filter(v=>v.isActive).length}業者中
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                      ✅ 割り当て済み業者 ({getStoreVendors(assignmentForm.selectedStoreId).length}件)
-                    </h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {getStoreVendors(assignmentForm.selectedStoreId).length === 0 ? (
-                        <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded">
-                          <p className="text-sm">まだ業者が割り当てられていません</p>
-                          <p className="text-xs mt-1">右側から業者を追加してください →</p>
-                        </div>
-                      ) : getStoreVendors(assignmentForm.selectedStoreId).map(vendor => (
-                        <div key={vendor.id} className="flex items-center justify-between p-2 border border-border rounded text-sm">
-                          <div>
-                            <div className="font-medium">
-                              📦 {(vendor.name ?? '').trim() !== '' ? vendor.name : '（名称未設定）'}
-                            </div>
-                            <div className="text-muted-foreground">{categoryLabels[vendor.category]}</div>
-                            {(vendor.contact_info ?? '').trim() && (
-                              <div className="text-xs text-muted-foreground">📞 {vendor.contact_info}</div>
-                            )}
-                          </div>
-                          <Button size="sm" variant="destructive" 
-                            onClick={()=>unassignVendorFromStore(assignmentForm.selectedStoreId, vendor.id)}>
-                            削除
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                      ➕ 未割り当て業者 ({vendors.filter(v => v.isActive && !getStoreVendors(assignmentForm.selectedStoreId).some(av => av.id === v.id)).length}件)
-                    </h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {vendors
-                        .filter(v => v.isActive && !getStoreVendors(assignmentForm.selectedStoreId).some(av => av.id === v.id))
-                        .length === 0 ? (
-                        <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded">
-                          <p className="text-sm">すべての業者が割り当て済みです</p>
-                          <p className="text-xs mt-1">✅ 完了</p>
-                        </div>
-                      ) : vendors
-                        .filter(v => v.isActive && !getStoreVendors(assignmentForm.selectedStoreId).some(av => av.id === v.id))
-                        .map(vendor => (
-                        <div key={vendor.id} className="flex items-center justify-between p-2 border border-border rounded text-sm">
-                          <div>
-                            <div className="font-medium">
-                              📦 {(vendor.name ?? '').trim() !== '' ? vendor.name : '（名称未設定）'}
-                            </div>
-                            <div className="text-muted-foreground">{categoryLabels[vendor.category]}</div>
-                            {(vendor.contact_info ?? '').trim() && (
-                              <div className="text-xs text-muted-foreground">📞 {vendor.contact_info}</div>
-                            )}
-                          </div>
-                          <Button size="sm" variant="default"
-                            onClick={()=>assignVendorToStore(assignmentForm.selectedStoreId, vendor.id)}>
-                            追加
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 一括割り当てオプション */}
-                <div className="pt-4 border-t border-border">
-                  <p className="text-sm font-medium mb-2">クイック操作</p>
-                  <div className="flex gap-2 flex-wrap">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => {
-                        vendors.filter(v => v.isActive).forEach(vendor => {
-                          assignVendorToStore(assignmentForm.selectedStoreId, vendor.id)
-                        })
-                      }}
-                      disabled={!assignmentForm.selectedStoreId}
-                    >
-                      全業者を割り当て
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => {
-                        getStoreVendors(assignmentForm.selectedStoreId).forEach(vendor => {
-                          unassignVendorFromStore(assignmentForm.selectedStoreId, vendor.id)
-                        })
-                      }}
-                      disabled={!assignmentForm.selectedStoreId || getStoreVendors(assignmentForm.selectedStoreId).length === 0}
-                    >
-                      全業者の割り当て解除
-                    </Button>
-                  </div>
-                </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          {/* 店舗別業者割り当て - 新しいトグルスイッチUI */}
+          <div className="mt-6">
+            <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+              <VendorAssignmentManager
+                stores={stores}
+                vendors={vendors}
+                selectedStoreId={assignmentForm.selectedStoreId}
+                onStoreChange={(storeId) => setAssignmentForm(f => ({ ...f, selectedStoreId: storeId }))}
+                getStoreVendors={getStoreVendors}
+                assignVendorToStore={assignVendorToStore}
+                unassignVendorFromStore={unassignVendorFromStore}
+              />
+            </Suspense>
+          </div>
         </TabsContent>
 
         <TabsContent value="targets" className="mt-4">
+          <Card className="mb-6">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg">
+                  <Target className="h-6 w-6 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-gray-900 mb-2">業態別テンプレートから一括設定</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    店舗の業態（居酒屋、カフェ、ラーメン店など）に応じた標準的な目標値を、
+                    テンプレートから簡単に適用できます。複数店舗をまとめて管理できます。
+                  </p>
+                  <Button
+                    onClick={() => setShowTargetSettingsModal(true)}
+                    className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700"
+                  >
+                    <Target className="h-4 w-4 mr-2" />
+                    テンプレートから目標を設定
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
-              <CardHeader><CardTitle>月次目標の設定</CardTitle></CardHeader>
+              <CardHeader><CardTitle>月次目標の設定（個別入力）</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 {targetStatus && (
                   <div className={`p-3 rounded-lg border ${
@@ -738,12 +977,51 @@ export const AdminSettings: React.FC = () => {
             </Card>
 
             <Card>
-              <CardHeader><CardTitle>設定済み目標</CardTitle></CardHeader>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>設定済み目標</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-normal text-muted-foreground">表示月:</label>
+                    <select
+                      value={targetFilterPeriod}
+                      onChange={(e) => setTargetFilterPeriod(e.target.value)}
+                      className="px-3 py-1 border border-input rounded-md bg-background text-sm"
+                    >
+                      <option value="all">すべて表示</option>
+                      {Array.from(new Set(targets.map(t => t.period)))
+                        .sort((a, b) => b.localeCompare(a))
+                        .map(period => {
+                          const [year, month] = period.split('-')
+                          return (
+                            <option key={period} value={period}>
+                              {year}年{parseInt(month)}月
+                            </option>
+                          )
+                        })}
+                    </select>
+                  </div>
+                </div>
+              </CardHeader>
               <CardContent className="space-y-3">
                 {targets.length === 0 && <div className="text-sm text-muted-foreground">目標がありません。</div>}
-                {targets
-                  .sort((a,b)=> (a.storeId+a.period).localeCompare(b.storeId+b.period))
-                  .map(t=>(
+                {(() => {
+                  const filteredTargets = targetFilterPeriod === 'all'
+                    ? targets
+                    : targets.filter(t => t.period === targetFilterPeriod)
+
+                  if (targets.length > 0 && filteredTargets.length === 0) {
+                    const [year, month] = targetFilterPeriod.split('-')
+                    return (
+                      <div className="text-center py-6 text-muted-foreground">
+                        <p className="text-sm">{year}年{parseInt(month)}月の目標はありません</p>
+                        <p className="text-xs mt-1">左側のフォームから目標を設定してください</p>
+                      </div>
+                    )
+                  }
+
+                  return filteredTargets
+                    .sort((a,b)=> (a.storeId+a.period).localeCompare(b.storeId+b.period))
+                    .map(t=>(
                   <div key={`${t.storeId}-${t.period}`} className="flex items-center justify-between border border-border rounded-md px-3 py-2 text-sm">
                     <div>
                       <div className="font-medium">
@@ -767,7 +1045,20 @@ export const AdminSettings: React.FC = () => {
                       <Button variant="destructive" size="sm" onClick={()=>deleteTarget(t.storeId, t.period)}>削除</Button>
                     </div>
                   </div>
-                ))}
+                  ))
+                })()}
+                {targets.length > 0 && (() => {
+                  const filteredCount = targetFilterPeriod === 'all'
+                    ? targets.length
+                    : targets.filter(t => t.period === targetFilterPeriod).length
+                  return (
+                    <div className="pt-2 mt-2 border-t border-border text-xs text-muted-foreground text-center">
+                      {targetFilterPeriod === 'all'
+                        ? `全${targets.length}件の目標を表示中`
+                        : `${filteredCount}件の目標を表示中（全${targets.length}件中）`}
+                    </div>
+                  )
+                })()}
               </CardContent>
             </Card>
           </div>
@@ -812,26 +1103,337 @@ export const AdminSettings: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+
+          <Card className="mt-6">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Receipt className="w-5 h-5 text-emerald-600" />
+                  <CardTitle className="text-lg">店舗別参考経費一覧</CardTitle>
+                </div>
+                <input
+                  type="month"
+                  value={expenseMonth}
+                  onChange={(e) => setExpenseMonth(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loadingExpenses ? (
+                <div className="text-center py-8 text-gray-500">読み込み中...</div>
+              ) : storeExpenses.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  登録されている店舗がありません
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">店舗名</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">人件費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">光熱費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">家賃</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">消耗品</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">販促費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">清掃費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">雑費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">通信費</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">その他</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">営業日数</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700 bg-emerald-50">合計</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {storeExpenses.map((store) => {
+                        const baseline = store.baseline
+                        const hasData = baseline !== null
+
+                        const laborCost = hasData
+                          ? (baseline.labor_cost_employee || 0) + (baseline.labor_cost_part_time || 0)
+                          : 0
+                        const utilities = baseline?.utilities || 0
+                        const rent = baseline?.rent || 0
+                        const consumables = baseline?.consumables || 0
+                        const promotion = baseline?.promotion || 0
+                        const cleaning = baseline?.cleaning || 0
+                        const misc = baseline?.misc || 0
+                        const communication = baseline?.communication || 0
+                        const others = baseline?.others || 0
+                        const openDays = baseline?.open_days || 0
+                        const total = laborCost + utilities + rent + consumables + promotion + cleaning + misc + communication + others
+
+                        return (
+                          <tr
+                            key={store.storeId}
+                            className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                              !hasData ? 'opacity-50' : ''
+                            }`}
+                          >
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                              {store.storeName}
+                              {!hasData && (
+                                <span className="ml-2 text-xs text-gray-400">(未登録)</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(laborCost) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(utilities) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(rent) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(consumables) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(promotion) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(cleaning) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(misc) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(communication) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? formatCurrency(others) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-gray-700">
+                              {hasData ? `${openDays}日` : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-emerald-700 bg-emerald-50">
+                              {hasData ? formatCurrency(total) : '-'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {storeExpenses.some(s => s.baseline !== null) && (
+                        <tr className="bg-gray-100 font-semibold">
+                          <td className="px-4 py-3 text-sm text-gray-900">合計</td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => {
+                                const b = s.baseline
+                                return sum + ((b?.labor_cost_employee || 0) + (b?.labor_cost_part_time || 0))
+                              }, 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.utilities || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.rent || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.consumables || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.promotion || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.cleaning || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.misc || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.communication || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => sum + (s.baseline?.others || 0), 0)
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-900">
+                            {storeExpenses.reduce((sum, s) => sum + (s.baseline?.open_days || 0), 0)}日
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700 bg-emerald-100">
+                            {formatCurrency(
+                              storeExpenses.reduce((sum, s) => {
+                                const b = s.baseline
+                                if (!b) return sum
+                                const laborCost = (b.labor_cost_employee || 0) + (b.labor_cost_part_time || 0)
+                                return sum + laborCost + (b.utilities || 0) + (b.rent || 0) +
+                                  (b.consumables || 0) + (b.promotion || 0) + (b.cleaning || 0) +
+                                  (b.misc || 0) + (b.communication || 0) + (b.others || 0)
+                              }, 0)
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="mt-4 text-sm text-gray-600">
+                <p>選択月: {new Date(expenseMonth + '-01').toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' })}</p>
+                <p className="mt-1">
+                  参考経費は月次計画で登録された金額です。未登録の店舗は「-」で表示されます。
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
-        <TabsContent value="ai-limits" className="mt-4">
-          <AIUsageLimitManagement />
+          </Tabs>
         </TabsContent>
 
-        <TabsContent value="audit-logs" className="mt-4">
-          <AuditLogViewer />
+        {/* システム設定タブ */}
+        <TabsContent value="system-settings" className="mt-4">
+          <Tabs defaultValue="audit-logs">
+            <TabsList>
+              <TabsTrigger value="audit-logs">
+                <Shield className="w-4 h-4 mr-2" />
+                監査ログ
+              </TabsTrigger>
+              <TabsTrigger value="error-logs">
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                エラーログ
+              </TabsTrigger>
+              <TabsTrigger value="data-export">
+                <Download className="w-4 h-4 mr-2" />
+                データエクスポート
+              </TabsTrigger>
+              <TabsTrigger value="ai-limits">
+                <Brain className="w-4 h-4 mr-2" />
+                AI使用制限
+              </TabsTrigger>
+              {user?.isSuperAdmin && (
+                <>
+                  <TabsTrigger value="system-health">
+                    <Activity className="w-4 h-4 mr-2" />
+                    システム監視
+                  </TabsTrigger>
+                  <TabsTrigger value="demo-data">
+                    <Database className="w-4 h-4 mr-2" />
+                    デモデータ管理
+                  </TabsTrigger>
+                  <TabsTrigger value="super-admin-activity">
+                    <Shield className="w-4 h-4 mr-2" />
+                    管理者ログ
+                  </TabsTrigger>
+                </>
+              )}
+            </TabsList>
+
+            <TabsContent value="audit-logs" className="mt-4">
+              <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                <AuditLogViewer />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="error-logs" className="mt-4">
+              <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                <div className="space-y-6">
+                  <ErrorStatsDashboard />
+                  <RealtimeErrorMonitor />
+                  <ErrorLogViewer />
+                </div>
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="data-export" className="mt-4">
+              <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                <DataExport />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="ai-limits" className="mt-4">
+              <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                <StoreAIUsageManagement />
+              </Suspense>
+            </TabsContent>
+
+            {/* スーパー管理者専用タブ */}
+            {user?.isSuperAdmin && (
+              <>
+                <TabsContent value="system-health" className="mt-4">
+                  <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                    <SystemHealthDashboard />
+                  </Suspense>
+                </TabsContent>
+                <TabsContent value="demo-data" className="mt-4">
+                  <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                    <DemoDataManagement />
+                  </Suspense>
+                </TabsContent>
+                <TabsContent value="super-admin-activity" className="mt-4">
+                  <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+                    <AdminActivityLogViewer />
+                  </Suspense>
+                </TabsContent>
+              </>
+            )}
+          </Tabs>
         </TabsContent>
       </Tabs>
 
+      {/* 組織切り替えモーダル */}
+      {showOrgSwitcher && user?.isSuperAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b flex items-center justify-between">
+              <h2 className="text-xl font-semibold">組織を切り替え</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowOrgSwitcher(false)}
+              >
+                閉じる
+              </Button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <OrganizationSwitcher />
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
       {showExpenseBaselineModal && (
-        <ExpenseBaselineSettings
+        <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+          <ExpenseBaselineSettings
+            stores={stores}
+            onClose={() => setShowExpenseBaselineModal(false)}
+            onSaved={() => {
+              setShowExpenseBaselineModal(false)
+            }}
+          />
+        </Suspense>
+      )}
+      {showTargetSettingsModal && (
+        <Suspense fallback={<div className="flex items-center justify-center p-8">読み込み中...</div>}>
+          <TargetSettings
           stores={stores}
-          onClose={() => setShowExpenseBaselineModal(false)}
+          existingTargets={targets}
+          onClose={() => setShowTargetSettingsModal(false)}
           onSaved={() => {
-            setShowExpenseBaselineModal(false)
+            setShowTargetSettingsModal(false)
           }}
+          upsertTarget={upsertTarget}
+          deleteTarget={deleteTarget}
         />
+        </Suspense>
       )}
     </PermissionGuard>
   )

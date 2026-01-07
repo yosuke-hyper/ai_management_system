@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
-import { Plus, Building2, RefreshCw, Download, Upload } from 'lucide-react';
-import { useAuth } from '../../hooks/useAuth';
-import { useStores } from '../../hooks/useStores';
+import React, { useState, useMemo, useCallback } from 'react';
+import { Plus, Building2, RefreshCw, CheckCircle, XCircle, Info } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { useAdminData } from '../../contexts/AdminDataContext';
+import { useBrands } from '../../hooks/useBrands';
+import { useLocation } from 'react-router-dom';
 import { StoresTable } from './StoresTable';
 import { StoreForm } from './StoreForm';
 import { StoreDetail } from './StoreDetail';
 import { StoreSelector } from './StoreSelector';
+import { StoreHolidayManagement } from './StoreHolidayManagement';
 import { Store } from '../../lib/supabase';
 import { canAddStore } from '@/services/usageLimits';
+import { useOrganization } from '@/contexts/OrganizationContext';
 
 interface StoreManagerProps {
   userId: string | null;
@@ -23,30 +27,107 @@ interface Notification {
 
 export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpdate }) => {
   const { user } = useAuth();
+  const { organization } = useOrganization();
+  const location = useLocation();
+  const { getBrandById } = useBrands();
   const {
-    stores,
-    selectedStoreId,
-    selectedStore,
-    loading,
-    error,
-    createStore,
-    updateStore,
-    deleteStore,
-    assignUserToStore,
-    selectStore,
-    fetchStores
-  } = useStores(userId);
+    stores: adminStores,
+    addStore,
+    updateStore: adminUpdateStore,
+    deleteStore: adminDeleteStore
+  } = useAdminData();
+
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const stores = useMemo(() => adminStores.filter(s => s.isActive !== false), [adminStores]);
+  const selectedStore = useMemo(() => stores.find(s => s.id === selectedStoreId) || null, [stores, selectedStoreId]);
+  const selectStore = useCallback((id: string | null) => setSelectedStoreId(id), []);
+
+  const createStore = async (storeData: { name: string; address: string; managerName?: string; brandId?: string; changeFund?: number; isActive?: boolean }) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await addStore({
+        name: storeData.name,
+        address: storeData.address,
+        managerName: storeData.managerName,
+        brandId: storeData.brandId,
+        changeFund: storeData.changeFund,
+        isActive: storeData.isActive
+      });
+      if (!result.ok) {
+        setError(result.error || '店舗作成に失敗しました');
+        return { error: result.error };
+      }
+      return {};
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '店舗作成に失敗しました';
+      setError(msg);
+      return { error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateStore = async (storeId: string, updateData: any) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await adminUpdateStore(storeId, {
+        name: updateData.name,
+        address: updateData.address,
+        manager: updateData.manager_name,
+        brandId: updateData.brand_id,
+        changeFund: updateData.change_fund,
+        isActive: updateData.isActive
+      });
+      return {};
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '店舗更新に失敗しました';
+      setError(msg);
+      return { error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteStore = async (storeId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await adminDeleteStore(storeId);
+      return {};
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '店舗削除に失敗しました';
+      setError(msg);
+      return { error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const assignUserToStore = async (_userId: string, _storeId: string) => {
+    return { error: 'ユーザー割り当て機能は現在利用できません' };
+  };
+
+  // URLから業態IDを取得
+  const params = new URLSearchParams(location.search);
+  const brandId = params.get('brand') || '';
+  const selectedBrand = getBrandById(brandId);
 
   const [showForm, setShowForm] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [viewingStore, setViewingStore] = useState<Store | null>(null);
+  const [holidaySettingStore, setHolidaySettingStore] = useState<Store | null>(null);
   const [notification, setNotification] = useState<Notification | null>(null);
 
   // 通知表示
-  const showNotification = (type: NotificationType, message: string) => {
+  const showNotification = (type: NotificationType, message: string, duration: number = 4000) => {
     console.log(`📢 StoreManager: 通知表示 - ${type}: ${message}`);
     setNotification({ type, message });
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => setNotification(null), duration);
   };
 
   // 権限チェック
@@ -73,6 +154,8 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
     name: string;
     address: string;
     managerName?: string;
+    brandId?: string;
+    changeFund?: number;
     isActive?: boolean;
   }) => {
     console.log('🏪 StoreManager: 店舗作成処理開始', {
@@ -101,7 +184,11 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
       return { error };
     } else {
       console.log('✅ StoreManager: 店舗作成成功');
-      showNotification('success', '店舗を作成しました');
+      const message = storeData.brandId
+        ? '店舗を作成し、業態を登録しました'
+        : '店舗を作成しました';
+      // 業態登録時は通知を長めに表示
+      showNotification('success', message, storeData.brandId ? 5000 : 4000);
 
        // ダッシュボード側の店舗データを更新
        if (onStoresUpdate) {
@@ -126,27 +213,49 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
     name: string;
     address: string;
     managerName?: string;
+    brandId?: string;
+    changeFund?: number;
     isActive?: boolean;
   }) => {
     if (!editingStore) return { error: '編集対象の店舗が見つかりません' };
-    
+
     console.log('🔄 StoreManager: 店舗更新処理開始', { storeId: editingStore.id, storeData });
-    
+
+    // 業態が変更されたかをチェック
+    const previousBrandId = (editingStore as any).brand_id || '';
+    const newBrandId = storeData.brandId || '';
+    const brandChanged = previousBrandId !== newBrandId;
+    const brandAdded = !previousBrandId && newBrandId;
+    const brandRemoved = previousBrandId && !newBrandId;
+
     try {
     const { error } = await updateStore(editingStore.id, {
       name: storeData.name,
       address: storeData.address,
       manager_name: storeData.managerName,
+      brand_id: storeData.brandId,
+      change_fund: storeData.changeFund,
       isActive: storeData.isActive
     });
-    
+
     if (error) {
       console.error('❌ StoreManager: 店舗更新エラー', error);
       showNotification('error', error);
       return { error };
     } else {
       console.log('✅ StoreManager: 店舗更新成功');
-      showNotification('success', '店舗を更新しました');
+      let message = '店舗を更新しました';
+      let duration = 4000;
+      if (brandAdded) {
+        message = '店舗を更新し、業態を登録しました';
+        duration = 5000; // 業態登録時は長めに表示
+      } else if (brandRemoved) {
+        message = '店舗を更新し、業態を解除しました';
+      } else if (brandChanged) {
+        message = '店舗を更新し、業態を変更しました';
+        duration = 5000; // 業態変更時も長めに表示
+      }
+      showNotification('success', message, duration);
       setEditingStore(null);
       setViewingStore(null);
        
@@ -243,8 +352,7 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
 
   // データ再読み込み
   const handleRefresh = () => {
-    fetchStores();
-    showNotification('info', 'データを更新しました');
+    window.location.reload();
   };
 
   // ユーザー割り当て（簡易実装）
@@ -259,6 +367,11 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
         }
       });
     }
+  };
+
+  // 休日設定
+  const handleHolidaySetting = (store: Store) => {
+    setHolidaySettingStore(store);
   };
 
   // アクセス権限チェック
@@ -299,12 +412,19 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
 
       {/* 通知 */}
       {notification && (
-        <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg ${
-          notification.type === 'success' ? 'bg-green-500 text-white' : 
+        <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-2xl animate-in slide-in-from-right duration-300 flex items-center gap-3 min-w-[320px] ${
+          notification.type === 'success' ? 'bg-green-500 text-white' :
           notification.type === 'error' ? 'bg-red-500 text-white' :
           'bg-blue-500 text-white'
         }`}>
-          {notification.message}
+          <div className="flex-shrink-0">
+            {notification.type === 'success' && <CheckCircle className="w-6 h-6" />}
+            {notification.type === 'error' && <XCircle className="w-6 h-6" />}
+            {notification.type === 'info' && <Info className="w-6 h-6" />}
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-sm">{notification.message}</p>
+          </div>
         </div>
       )}
 
@@ -358,6 +478,7 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
             selectedStoreId={selectedStoreId}
             onStoreSelect={selectStore}
             loading={loading}
+            selectedBrand={selectedBrand}
           />
           
           {/* 選択中店舗の詳細 */}
@@ -414,11 +535,22 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
             onEdit={handleEdit}
             onDelete={canManageStores ? handleDeleteStore : undefined}
             onView={handleView}
+            onHolidaySetting={canManageStores ? handleHolidaySetting : undefined}
             onAssignUser={user?.role === 'admin' ? handleAssignUser : undefined}
             loading={loading}
           />
         </div>
       </div>
+
+      {/* 休日設定モーダル */}
+      {holidaySettingStore && organization && (
+        <StoreHolidayManagement
+          storeId={holidaySettingStore.id}
+          storeName={holidaySettingStore.name}
+          organizationId={organization.id}
+          onClose={() => setHolidaySettingStore(null)}
+        />
+      )}
 
       {/* 店舗フォームモーダル */}
       {showForm && (

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getTargets } from '@/services/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOrganization } from '@/contexts/OrganizationContext'
+import { supabase } from '@/lib/supabase'
 
 export interface TargetMetrics {
   salesAchievement: number
@@ -25,44 +27,93 @@ export type TargetData = {
 export const useTargets = (storeId: string = 'all', period: string) => {
   const [targets, setTargets] = useState<TargetData[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const { user } = useAuth()
+  const { user, isDemoMode } = useAuth()
+  const { organizationId } = useOrganization()
 
-  useEffect(() => {
-    const fetchTargets = async () => {
-      if (!user) return
+  const fetchTargets = useCallback(async () => {
+    const demoSessionId = typeof window !== 'undefined' ? localStorage.getItem('demo_session_id') : null
+    const isDemo = isDemoMode || !!demoSessionId
 
-      try {
-        setIsLoading(true)
-        const { data, error } = await getTargets({
-          storeId: storeId !== 'all' ? storeId : undefined
-        })
+    if (!user && !isDemo) {
+      setIsLoading(false)
+      return
+    }
 
-        if (error) {
-          console.error('useTargets getTargets error:', error)
+    try {
+      setIsLoading(true)
+
+      if (!isDemo && organizationId) {
+        const { setSelectedOrganizationContext } = await import('@/services/organizationService')
+        await setSelectedOrganizationContext(organizationId)
+      }
+
+      if (isDemo) {
+        console.log('📊 Demo mode: Fetching from fixed_demo_targets', { storeId, period })
+
+        let query = supabase
+          .from('fixed_demo_targets')
+          .select('*')
+          .eq('period', period)
+
+        if (storeId && storeId !== 'all') {
+          query = query.eq('store_id', storeId)
+        }
+
+        const { data: demoData, error: demoError } = await query
+
+        if (demoError) {
+          console.error('useTargets demo error:', demoError)
           setTargets([])
           return
         }
 
-        const mapped: TargetData[] = (data ?? []).map(t => ({
+        const demoTargets: TargetData[] = (demoData || []).map(t => ({
           storeId: t.store_id,
           period: t.period,
-          targetSales: t.target_sales,
-          targetProfit: t.target_profit,
-          targetProfitMargin: t.target_profit_margin,
-          targetCostRate: t.target_cost_rate || 0,
-          targetLaborRate: t.target_labor_rate || 0
+          targetSales: Number(t.target_sales),
+          targetProfit: Number(t.target_profit),
+          targetProfitMargin: Number(t.target_profit_margin),
+          targetCostRate: Number(t.target_cost_rate || 0),
+          targetLaborRate: Number(t.target_labor_rate || 0)
         }))
-        setTargets(mapped)
-      } catch (e) {
-        console.error('❌ useTargets: エラー:', e)
-        setTargets([])
-      } finally {
-        setIsLoading(false)
-      }
-    }
 
+        console.log('📊 Demo targets loaded:', demoTargets.length, demoTargets)
+        setTargets(demoTargets)
+        setIsLoading(false)
+        return
+      }
+
+      const { data, error } = await getTargets({
+        storeId: storeId !== 'all' ? storeId : undefined
+      })
+
+      if (error) {
+        console.error('useTargets getTargets error:', error)
+        setTargets([])
+        return
+      }
+
+      const mapped: TargetData[] = (data ?? []).map(t => ({
+        storeId: t.store_id,
+        period: t.period,
+        targetSales: t.target_sales,
+        targetProfit: t.target_profit,
+        targetProfitMargin: t.target_profit_margin,
+        targetCostRate: t.target_cost_rate || 0,
+        targetLaborRate: t.target_labor_rate || 0
+      }))
+      setTargets(mapped)
+    } catch (e) {
+      console.error('❌ useTargets: エラー:', e)
+      setTargets([])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [storeId, user, isDemoMode, period, organizationId])
+
+  useEffect(() => {
     fetchTargets()
-  }, [storeId, user])
+  }, [fetchTargets])
 
   const calculateTargetMetrics = (
     currentSales: number,
@@ -82,7 +133,7 @@ export const useTargets = (storeId: string = 'all', period: string) => {
     
     const requiredDailySales = daysRemaining > 0 ? remainingSales / daysRemaining : 0
     const averageCustomerSpend = 3500 // Average spend per customer
-    const requiredCustomers = requiredDailySales / averageCustomerSpend
+    const requiredCustomers = Math.round(requiredDailySales / averageCustomerSpend)
 
     return {
       salesAchievement,
@@ -100,7 +151,9 @@ export const useTargets = (storeId: string = 'all', period: string) => {
   }
 
   const getAllStoresTarget = () => {
+    console.log('📊 getAllStoresTarget called', { period, targets: targets.length })
     const storeTargets = targets.filter(t => t.period === period)
+    console.log('📊 Filtered targets for period', { period, storeTargets: storeTargets.length, targets: storeTargets })
     const agg = storeTargets.reduce((acc, t) => ({
       targetSales: acc.targetSales + t.targetSales,
       targetProfit: acc.targetProfit + t.targetProfit,
@@ -110,13 +163,16 @@ export const useTargets = (storeId: string = 'all', period: string) => {
     const targetProfitMargin = agg.targetSales > 0 ? (agg.targetProfit / agg.targetSales) * 100 : 0
     const avgCostRate = storeTargets.length > 0 ? agg.totalCostRate / storeTargets.length : 0
     const avgLaborRate = storeTargets.length > 0 ? agg.totalLaborRate / storeTargets.length : 0
-    return {
-      targetSales: agg.targetSales,
-      targetProfit: agg.targetProfit,
-      targetProfitMargin,
-      targetCostRate: avgCostRate,
-      targetLaborRate: avgLaborRate
+    const result = {
+      targetSales: agg.targetSales || 0,
+      targetProfit: agg.targetProfit || 0,
+      targetProfitMargin: targetProfitMargin || 0,
+      targetCostRate: avgCostRate || 0,
+      targetLaborRate: avgLaborRate || 0,
+      targetAverageSpend: 1000
     }
+    console.log('📊 getAllStoresTarget result:', result)
+    return result
   }
 
   return {
@@ -124,6 +180,7 @@ export const useTargets = (storeId: string = 'all', period: string) => {
     isLoading,
     getTargetForStore,
     getAllStoresTarget,
-    calculateTargetMetrics
+    calculateTargetMetrics,
+    refetch: fetchTargets
   }
 }

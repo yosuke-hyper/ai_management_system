@@ -5,15 +5,25 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY!
 
 export const supabase = createClient(url, key, {
   auth: {
-    flowType: 'pkce',
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
+    detectSessionInUrl: false,
     storageKey: 'rms-auth',
   },
 })
 
 export const isSupabaseReady = () => Boolean(url && key)
+
+/**
+ * storeIdを正規化（空文字や'all'をnullに変換）
+ * uuidエラーを防ぐため
+ */
+export const normalizeStoreId = (storeId?: string | null): string | null => {
+  if (!storeId || storeId === 'all' || storeId.trim() === '') {
+    return null
+  }
+  return storeId
+}
 
 console.log(isSupabaseReady() ? '✅ Supabase configured' : '⚠️ Supabase not configured', {
   hasUrl: !!url,
@@ -39,6 +49,7 @@ export interface Store {
   address: string
   manager_id?: string
   is_active?: boolean
+  change_fund?: number
   created_at?: string
   updated_at?: string
 }

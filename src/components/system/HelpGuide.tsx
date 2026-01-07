@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, BookOpen, FileText, Target, PieChart, MessageSquare, Users, Calendar, TrendingUp } from 'lucide-react';
+import { X, BookOpen, FileText, Target, PieChart, MessageSquare, Users, Calendar, TrendingUp, Building2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -21,31 +21,40 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
       steps: [
         '左メニューから「日報作成」をクリック',
         '店舗、日付を選択',
-        '売上、仕入れ、各種経費を入力',
-        '仕入内訳（業者別）がある場合は追加',
-        '「保存」ボタンで登録完了'
+        '営業区分（昼・夜・1日）を選択',
+        '売上、客数、仕入れ、各種経費を入力',
+        '釣り銭・現金売上・カード売上などの詳細を記録',
+        '「業者別仕入内訳を追加」で詳細な仕入データを記録',
+        '業者は複数追加可能（野菜・肉、鮮魚、米等のカテゴリ別）',
+        '報告内容（任意）を記入して「保存」'
       ],
       tips: [
         '金額は半角数字で入力してください',
-        '仕入内訳は複数の業者を追加できます',
-        '保存後も編集可能です'
+        '昼・夜を分けて記録すると時間帯別の分析が可能',
+        '釣り銭は店舗設定で設定した金額がデフォルト表示',
+        '業者別仕入を登録すると詳細な原価分析が可能',
+        '保存後もダッシュボードから編集可能です',
+        '過去の日報一覧から編集ボタンで修正できます'
       ]
     },
     {
       icon: PieChart,
       title: 'ダッシュボードの見方',
-      role: ['admin', 'manager', 'staff'],
+      role: ['admin', 'manager', 'staff', 'viewer'],
       steps: [
         '左メニューから表示期間を選択（日次・週次・月次）',
         'ヘッダーの店舗選択で表示店舗を切り替え',
-        'KPIカードで主要指標を確認',
-        'グラフで推移を視覚的に把握',
-        'データテーブルで詳細を確認'
+        'KPIカードで主要指標を確認（売上、原価率、人件費率、営業利益等）',
+        'カレンダーヒートマップで売上傾向を視覚化',
+        'グラフで推移を分析（売上・経費推移、損益分岐点等）',
+        'データテーブルで日別詳細を確認',
+        '過去の日報一覧から編集・削除が可能'
       ],
       tips: [
-        '管理者は全店舗のデータを閲覧可能',
-        'カードをクリックすると詳細分析が表示されます',
-        'グラフは期間に応じて自動調整されます'
+        '管理者・マネージャーは全店舗のデータを閲覧可能',
+        'スタッフ・閲覧者は割り当てられた店舗のみ表示',
+        '目標設定がある場合、達成率が自動表示されます',
+        'P/L詳細モーダルで損益計算書を確認可能'
       ]
     },
     {
@@ -55,31 +64,36 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
       steps: [
         '左メニューから「目標設定」をクリック',
         '店舗と対象月を選択',
-        '売上目標、原価率、人件費率などを入力',
+        '月次目標: 売上目標、原価率、人件費率、営業利益率を入力',
+        '日別目標: 特定の日の売上目標を個別設定可能',
         '「保存」で設定完了',
         'ダッシュボードで達成率が自動表示されます'
       ],
       tips: [
-        '目標は月ごとに設定できます',
-        '達成率はリアルタイムで計算されます',
-        '過去の実績を参考に設定しましょう'
+        '月次目標は月ごとに設定できます',
+        '日別目標は繁忙日や特別な日に設定すると便利',
+        '達成率はリアルタイムで計算され、KPIカードに表示',
+        'ブランド別にデフォルト目標を設定可能'
       ]
     },
     {
       icon: Calendar,
-      title: '月次経費の入力',
+      title: '月次固定費入力',
       role: ['admin', 'manager'],
       steps: [
-        '左メニューから「月次経費入力」をクリック',
+        '左メニューから「月次固定費入力」をクリック',
         '店舗と対象月を選択',
-        '家賃、光熱費、通信費などの固定費を入力',
-        '「保存」で登録完了',
-        '利益計算に自動反映されます'
+        '社員人件費、アルバイト人件費、家賃、光熱費、消耗品等を入力',
+        '「経費ベースライン設定」で標準経費を設定',
+        'ベースラインを設定すると、月次固定費入力時にデフォルト値として使用',
+        '「保存」で登録完了し、利益計算に自動反映'
       ],
       tips: [
-        '月に1回入力すれば自動で計算に反映',
-        '消耗品や家賃は忘れずに入力',
-        '過去の月次経費をコピーして編集可能'
+        '最初はサンプルデータで操作感を確認し、慣れたら正式な固定費を入力してください',
+        '経費ベースラインを設定すると毎月の入力が楽になります',
+        '家賃や固定費はベースラインに設定推奨',
+        '月次固定費は営業利益の計算に使用されます',
+        '正確な固定費を入力することで、より精度の高い損益分析が可能になります'
       ]
     },
     {
@@ -88,15 +102,19 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
       role: ['admin', 'manager', 'staff'],
       steps: [
         '左メニューから「AIチャット」をクリック',
-        '質問を入力（例：「今月の売上は？」）',
+        'ヘッダーで対象店舗を選択',
+        '質問を入力（例：「今月の売上は？」「原価率の推移は？」）',
         'AIが業績データを分析して回答',
-        '会話履歴は自動保存されます',
-        '検索機能で過去の会話を検索可能'
+        '会話履歴は自動保存され、後から検索可能',
+        'アーカイブ機能で過去の会話を管理'
       ],
       tips: [
+        '使用制限: 店舗ごとに月間100回まで利用可能（デフォルト）',
         '具体的な質問ほど的確な回答が得られます',
-        '「原価率を改善するには？」など提案も依頼可',
-        '会話は店舗ごとに分かれています'
+        '改善提案や経営アドバイスも依頼できます',
+        '使用回数は画面右上のインジケーターで確認',
+        '管理者は「店舗別AI使用制限管理」で店舗ごとの上限を変更可能',
+        'プランによってAI使用量の上限が異なります'
       ]
     },
     {
@@ -106,38 +124,90 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
       steps: [
         '左メニューから「AI分析レポート」をクリック',
         '「新規レポート生成」をクリック',
-        '期間と店舗を選択',
-        'AIが自動で詳細分析レポートを作成',
-        'レポートを確認・共有・ダウンロード可能'
+        '期間（開始日〜終了日）と店舗を選択',
+        'レポートのタイトルを入力（任意）',
+        'AIが自動で詳細分析レポートを作成（売上分析、コスト分析、改善提案等）',
+        'レポートを確認・編集・共有・ダウンロード'
       ],
       tips: [
-        '月末や週末にレポートを生成すると便利',
-        '共有リンクで他のスタッフに共有可能',
-        'レポートはPDF形式でダウンロードできます'
+        '月末や週末にレポートを生成すると振り返りに便利',
+        '共有リンクを生成して他のメンバーに共有可能',
+        'レポートの可視性設定: プライベート/組織内共有を選択',
+        'レポートの削除はオーナー・管理者・マネージャーのみ可能',
+        '定期レポート機能で自動生成・メール送信も可能（管理者設定）'
       ]
     },
     {
       icon: Users,
-      title: 'スタッフ管理',
+      title: '組織・メンバー管理',
       role: ['admin'],
       steps: [
-        '左メニューから「設定」→「スタッフ管理」',
-        '「新規スタッフ追加」をクリック',
-        '名前、メールアドレス、役割を入力',
-        '担当店舗を割り当て',
-        '「保存」で登録完了'
+        '左メニューから「設定」→「組織設定」',
+        '「メンバー管理」タブで組織メンバーを確認',
+        '「招待」ボタンでメールアドレスを入力して招待',
+        '役割を選択: オーナー/管理者/マネージャー/スタッフ/閲覧者',
+        '招待されたユーザーはメールのリンクからアカウント作成',
+        'メンバー一覧から役割変更や削除が可能'
       ],
       tips: [
-        '役割：統括（全権限）、店長、スタッフ',
-        'スタッフは割り当てられた店舗のみ閲覧可',
-        'パスワードは初回ログイン時に設定'
+        'オーナー: 組織の最高権限、全機能利用可能、メンバー管理・設定変更可',
+        '管理者: 全機能利用可能、設定変更・メンバー管理可',
+        'マネージャー: 日報・目標・レポート管理が可能',
+        'スタッフ: 日報入力・閲覧のみ',
+        '閲覧者: データ閲覧のみ（編集不可）',
+        '組織はマルチテナント対応で完全にデータ分離'
+      ]
+    },
+    {
+      icon: Building2,
+      title: 'ブランド・店舗管理',
+      role: ['admin'],
+      steps: [
+        '左メニューから「管理者設定」→「ブランド管理」',
+        '「新規ブランド追加」で業態を追加（レストラン、カフェ等）',
+        'ブランドごとにデフォルト目標値を設定（原価率、人件費率等）',
+        'アイコンやカラーでブランドを視覚的に区別',
+        '「店舗管理」で各店舗にブランドを割り当て',
+        '店舗ごとに釣り銭の初期金額を設定可能',
+        '店舗ごとに担当者・休業日を設定可能'
+      ],
+      tips: [
+        '複数業態を運営している場合、ブランド管理が便利',
+        'ブランドごとに異なる目標設定が可能',
+        '店舗は複数のブランドに分類可能',
+        '釣り銭を設定すると日報入力時に自動で初期値として表示',
+        '業者管理も店舗ごとにカスタマイズ可能',
+        '休業日設定で営業カレンダーを管理'
+      ]
+    },
+    {
+      icon: Settings,
+      title: '管理者設定',
+      role: ['admin'],
+      steps: [
+        '左メニューから「管理者設定」をクリック',
+        '店舗別AI使用制限管理: 店舗ごとの月間AI使用上限を設定',
+        'ブランド管理: 業態の追加・編集・目標値設定',
+        '監査ログ: システムの重要な操作履歴を確認',
+        'エラーログ: システムエラーやAPI障害を監視',
+        'レポートスケジュール: 定期的なAIレポート生成・送信を設定',
+        'サブスクリプション管理: プランの確認と変更'
+      ],
+      tips: [
+        '店舗別AI使用制限でコストを細かく管理できます',
+        '監査ログで不正操作や問題を追跡可能',
+        'エラーログでシステムの健全性を監視',
+        'リアルタイムエラーモニタリングで即座に問題を検知',
+        '定期レポート機能で自動的に分析レポートを送信',
+        'サブスクリプションプランでAI使用量が変わります'
       ]
     }
   ];
 
-  const userSections = sections.filter(section =>
-    section.role.includes(user?.role || 'staff')
-  );
+  // オーナー・デモモード・未ログイン時は全セクション表示
+  const userSections = !user || user.email?.includes('demo-') || user?.role === 'owner'
+    ? sections
+    : sections.filter(section => section.role.includes(user?.role || 'staff'));
 
   return (
     <div
@@ -262,15 +332,35 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
               </div>
               <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
                 <div className="font-bold text-gray-900 mb-2 text-base">Q. 過去のデータを修正できますか？</div>
-                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. はい、日報一覧から該当の日報を選択して編集できます。</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. はい、ダッシュボードの過去の日報一覧から編集ボタンをクリックして修正できます。管理者・マネージャー・スタッフは編集可能ですが、閲覧者は編集できません。</div>
               </div>
               <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
                 <div className="font-bold text-gray-900 mb-2 text-base">Q. 他の店舗のデータは見られますか？</div>
-                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. 権限により異なります。統括は全店舗、店長・スタッフは割り当てられた店舗のみ閲覧可能です。</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. 権限により異なります。管理者・マネージャーは全店舗のデータを閲覧可能。スタッフ・閲覧者は割り当てられた店舗のみ閲覧できます。</div>
               </div>
               <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
-                <div className="font-bold text-gray-900 mb-2 text-base">Q. AIチャットの使用料金は？</div>
-                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. システム利用料金に含まれています。ただし、過度な使用は控えてください。</div>
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. AIチャットの使用制限は？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. 店舗ごとに月間100回まで利用可能です（デフォルト）。使用回数は画面右上のインジケーターで確認できます。管理者は「管理者設定」→「店舗別AI使用制限管理」で店舗ごとの上限を変更できます。</div>
+              </div>
+              <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. デモモードとは何ですか？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. システムを試用できるモードです。サンプルデータが用意されており、実際の操作感を確認できます。デモデータは保存されず、セッション終了時にリセットされます。</div>
+              </div>
+              <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. Google Sheets連携は可能ですか？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. はい、Google Sheets APIを設定することで、日報データを自動的にスプレッドシートに同期できます。詳細は管理者にお問い合わせください。</div>
+              </div>
+              <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. 複数のブランドを管理できますか？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. はい、ブランド管理機能で複数の業態（レストラン、カフェ、居酒屋等）を管理できます。ブランドごとに異なる目標値を設定可能です。</div>
+              </div>
+              <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. 昼・夜の営業区分とは何ですか？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. 1日を昼と夜に分けて日報を記録できる機能です。営業区分を「昼」「夜」「1日」から選択でき、時間帯別の売上・客数・経費を分析できます。昼と夜で異なる業態を運営する店舗に便利です。</div>
+              </div>
+              <div className="pb-4 border-b border-gray-200 last:border-0 last:pb-0">
+                <div className="font-bold text-gray-900 mb-2 text-base">Q. 釣り銭設定とは何ですか？</div>
+                <div className="text-sm text-gray-600 leading-relaxed pl-4">A. 店舗ごとに釣り銭の初期金額を設定できる機能です。店舗管理で釣り銭金額を設定すると、日報入力時に自動で初期値として表示され、入力の手間を省けます。毎日同じ金額で準備する店舗に便利です。</div>
               </div>
             </div>
           </div>
@@ -279,13 +369,18 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({ isOpen, onClose }) => {
           <div className="bg-gradient-to-r from-blue-50 to-green-50 border-2 border-blue-300 rounded-xl p-6 md:p-8 text-center shadow-sm">
             <h3 className="text-xl font-bold text-gray-900 mb-3 flex items-center justify-center gap-2">
               <span className="text-2xl">📞</span>
-              お問い合わせ
+              お問い合わせ・サポート
             </h3>
             <p className="text-base text-gray-700 mb-4 leading-relaxed">
-              ご不明な点がございましたら、システム管理者までお気軽にお問い合わせください。
+              ご不明な点やトラブルがございましたら、組織の管理者までお気軽にお問い合わせください。
             </p>
-            <div className="text-sm text-gray-500 font-medium">
-              システムバージョン: 1.0.0
+            <div className="space-y-2">
+              <div className="text-sm text-gray-600">
+                <strong>主な機能：</strong> 日報管理 / ダッシュボード / AI分析 / 目標設定 / マルチテナント
+              </div>
+              <div className="text-xs text-gray-500 font-medium">
+                システムバージョン: 3.0.0 | 最終更新: 2025年12月
+              </div>
             </div>
           </div>
           </div>

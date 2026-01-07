@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { UserPlus, Trash2, Shield, User, Mail, Calendar, AlertCircle } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOrganization } from '@/contexts/OrganizationContext'
 import {
   getOrganizationMembers,
   removeOrganizationMember,
@@ -29,6 +30,7 @@ interface Props {
 
 export const OrganizationMembers: React.FC<Props> = ({ organizationId }) => {
   const { user } = useAuth()
+  const { isAdmin, organizationRole } = useOrganization()
   const [members, setMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,14 +46,25 @@ export const OrganizationMembers: React.FC<Props> = ({ organizationId }) => {
       setLoading(true)
       setError(null)
 
+      console.log('🔍 メンバー一覧取得開始:', { organizationId, userId: user?.id })
+
       const { data, error: fetchError } = await getOrganizationMembers(organizationId)
+
+      console.log('📊 メンバー一覧取得結果:', { data, error: fetchError })
+
       if (fetchError) {
-        setError('メンバー一覧の取得に失敗しました')
+        console.error('❌ メンバー取得エラー:', fetchError)
+        setError(`メンバー一覧の取得に失敗しました: ${fetchError.message}`)
         return
+      }
+
+      if (!data || data.length === 0) {
+        console.warn('⚠️ メンバーが0件です')
       }
 
       setMembers(data || [])
     } catch (err) {
+      console.error('❌ 予期しないエラー:', err)
       setError('メンバー一覧の取得に失敗しました')
     } finally {
       setLoading(false)
@@ -133,7 +146,15 @@ export const OrganizationMembers: React.FC<Props> = ({ organizationId }) => {
   }
 
   const currentUserMember = members.find(m => m.user_id === user?.id)
-  const isOwnerOrAdmin = currentUserMember?.role === 'owner' || currentUserMember?.role === 'admin'
+  const isOwnerOrAdmin = isAdmin || currentUserMember?.role === 'owner' || currentUserMember?.role === 'admin'
+
+  console.log('🔐 権限チェック:', {
+    isAdmin,
+    organizationRole,
+    currentUserMember,
+    isOwnerOrAdmin,
+    membersCount: members.length
+  })
 
   if (loading) {
     return (
@@ -163,12 +184,26 @@ export const OrganizationMembers: React.FC<Props> = ({ organizationId }) => {
             </Button>
           )}
         </div>
+        {!isOwnerOrAdmin && (
+          <p className="text-xs text-slate-500 mt-2">
+            権限: {organizationRole || 'メンバー'}
+            {organizationRole === 'member' && ' (招待権限なし)'}
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         {error && (
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 mb-6">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-800">{error}</p>
+            <div className="flex-1">
+              <p className="text-sm text-red-800 mb-2">{error}</p>
+              <button
+                onClick={loadMembers}
+                className="text-xs text-red-700 hover:text-red-900 underline"
+              >
+                再試行
+              </button>
+            </div>
           </div>
         )}
 

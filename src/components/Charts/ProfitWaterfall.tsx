@@ -5,7 +5,7 @@ import { DailyReportData } from '@/types'
 import { formatCurrency } from '@/lib/format'
 import { DailyExpenseReference } from '@/hooks/useExpenseBaseline'
 
-export const ProfitWaterfall: React.FC<{
+const ProfitWaterfallComponent: React.FC<{
   reports: DailyReportData[]
   expenseBaseline?: DailyExpenseReference
   adjustedLaborCost?: number
@@ -121,3 +121,5 @@ export const ProfitWaterfall: React.FC<{
     </Card>
   )
 }
+
+export const ProfitWaterfall = React.memo(ProfitWaterfallComponent)

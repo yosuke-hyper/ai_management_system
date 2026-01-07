@@ -1,6 +1,15 @@
 import { supabase } from '@/lib/supabase'
 import { getCurrentUserOrganizationId } from './organizationService'
 
+/**
+ * @deprecated このファイルは古い実装です。
+ * 新しい料金プラン体系では、subscriptionService.ts の
+ * getSubscriptionLimits() を使用してください。
+ *
+ * 旧: organizationsテーブルから直接制限を取得
+ * 新: subscription_plans → organization_subscriptions 経由で制限を取得
+ */
+
 export interface UsageLimits {
   maxStores: number
   maxUsers: number

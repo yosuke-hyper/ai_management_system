@@ -3,14 +3,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Building, Users, CreditCard, Save, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNavigate } from 'react-router-dom'
 import {
   getOrganization,
   updateOrganization,
   getCurrentUserOrganizationId
 } from '@/services/organizationService'
-import { OrganizationMembers } from '@/components/Organization/OrganizationMembers'
+import { UnifiedMemberManagement } from '@/components/Organization/UnifiedMemberManagement'
 import { SubscriptionInfo } from '@/components/Organization/SubscriptionInfo'
 import { UsageOverview } from '@/components/Usage/UsageOverview'
+import { StoreCountManagement } from '@/components/Organization/StoreCountManagement'
 
 interface Organization {
   id: string
@@ -30,6 +32,7 @@ interface Organization {
 
 export const OrganizationSettings: React.FC = () => {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [organization, setOrganization] = useState<Organization | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -157,48 +160,41 @@ export const OrganizationSettings: React.FC = () => {
         </div>
 
         <div className="mb-6 border-b border-slate-200">
-          <div className="flex gap-4">
+          <div className="flex gap-1 sm:gap-4 overflow-x-auto">
             <button
               onClick={() => setActiveTab('general')}
-              className={`px-4 py-3 font-medium transition-colors relative ${
+              className={`px-3 sm:px-4 py-3 font-medium transition-colors relative flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${
                 activeTab === 'general'
                   ? 'text-blue-600'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Building className="w-4 h-4 inline mr-2" />
-              基本情報
+              <Building className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm sm:text-base">基本情報</span>
               {activeTab === 'general' && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
               )}
             </button>
             <button
               onClick={() => setActiveTab('members')}
-              className={`px-4 py-3 font-medium transition-colors relative ${
+              className={`px-3 sm:px-4 py-3 font-medium transition-colors relative flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${
                 activeTab === 'members'
                   ? 'text-blue-600'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Users className="w-4 h-4 inline mr-2" />
-              メンバー管理
+              <Users className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm sm:text-base">メンバー管理</span>
               {activeTab === 'members' && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
               )}
             </button>
             <button
-              onClick={() => setActiveTab('subscription')}
-              className={`px-4 py-3 font-medium transition-colors relative ${
-                activeTab === 'subscription'
-                  ? 'text-blue-600'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => navigate('/dashboard/subscription')}
+              className="px-3 sm:px-4 py-3 font-medium transition-colors relative flex items-center gap-1.5 sm:gap-2 whitespace-nowrap text-slate-600 hover:text-slate-900"
             >
-              <CreditCard className="w-4 h-4 inline mr-2" />
-              サブスクリプション
-              {activeTab === 'subscription' && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
-              )}
+              <CreditCard className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm sm:text-base">サブスク</span>
             </button>
           </div>
         </div>
@@ -304,11 +300,12 @@ export const OrganizationSettings: React.FC = () => {
         )}
 
         {activeTab === 'members' && (
-          <OrganizationMembers organizationId={organization.id} />
+          <UnifiedMemberManagement organizationId={organization.id} />
         )}
 
         {activeTab === 'subscription' && (
           <div className="space-y-6">
+            <StoreCountManagement />
             <UsageOverview />
             <SubscriptionInfo organization={organization} onUpdate={loadOrganization} />
           </div>

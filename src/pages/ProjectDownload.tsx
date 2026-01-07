@@ -44,7 +44,7 @@ export function ProjectDownload() {
       }
 
       const blob = await zip.generateAsync({ type: 'blob' })
-      const fileName = `ai-management-system-${new Date().toISOString().split('T')[0]}.zip`
+      const fileName = `foodvalue-for-keiei-bunseki-${new Date().toISOString().split('T')[0]}.zip`
       saveAs(blob, fileName)
       setSuccess(true)
     } catch (err) {

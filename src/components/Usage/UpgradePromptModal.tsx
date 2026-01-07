@@ -55,26 +55,26 @@ export const UpgradePromptModal: React.FC<Props> = ({ type, currentLimit, onClos
   const plans = [
     {
       name: 'Starter',
-      price: '¥9,800/月',
-      stores: 3,
+      price: '¥3,980/月',
+      stores: '1店舗',
       users: 5,
-      ai: 100,
+      ai: 50,
       popular: false
     },
     {
-      name: 'Business',
-      price: '¥29,800/月',
-      stores: 10,
-      users: 20,
-      ai: 500,
+      name: 'Standard',
+      price: '¥7,980/月',
+      stores: '2〜3店舗',
+      users: 10,
+      ai: 300,
       popular: true
     },
     {
-      name: 'Enterprise',
-      price: '要相談',
-      stores: '無制限',
-      users: '無制限',
-      ai: '無制限',
+      name: 'Premium',
+      price: '¥12,800/月',
+      stores: '4店舗以上',
+      users: 20,
+      ai: 2000,
       popular: false
     }
   ]

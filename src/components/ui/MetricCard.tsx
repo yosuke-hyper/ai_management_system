@@ -18,6 +18,7 @@ export interface MetricCardProps {
   details?: Array<{ label: string; value: string }>
   loading?: boolean
   className?: string
+  size?: 'default' | 'large' | 'hero'
 }
 
 const toneClasses = {
@@ -36,7 +37,7 @@ const iconToneClasses = {
   neutral: 'text-muted-foreground'
 }
 
-export const MetricCard: React.FC<MetricCardProps> = ({
+export const MetricCard: React.FC<MetricCardProps> = React.memo(({
   label,
   value,
   delta,
@@ -45,7 +46,8 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   hint,
   details,
   loading = false,
-  className
+  className,
+  size = 'default'
 }) => {
   if (loading) {
     return (
@@ -66,47 +68,66 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 
   return (
     <Card className={cn('transition-all duration-200 hover:shadow-md', className)}>
-      <CardContent className="p-6">
+      <CardContent className={cn(
+        'p-6',
+        size === 'large' && 'p-8',
+        size === 'hero' && 'p-10'
+      )}>
         <div className="flex items-center justify-between mb-4">
-          <div className="text-sm font-medium text-muted-foreground">
+          <div className={cn(
+            'font-bold text-muted-foreground',
+            size === 'hero' ? 'text-xl' : size === 'large' ? 'text-base' : 'text-sm'
+          )}>
             {label}
           </div>
-          <div className={cn('p-2 rounded-lg', toneClasses[tone])}>
-            <Icon className={cn('h-4 w-4', iconToneClasses[tone])} />
+          <div className={cn(
+            'rounded-lg',
+            size === 'hero' ? 'p-4' : size === 'large' ? 'p-3' : 'p-2',
+            toneClasses[tone]
+          )}>
+            <Icon className={cn(
+              iconToneClasses[tone],
+              size === 'hero' ? 'h-8 w-8' : size === 'large' ? 'h-6 w-6' : 'h-4 w-4'
+            )} />
           </div>
         </div>
-        
+
         <div className="space-y-2">
-          <div className="text-2xl font-bold text-foreground">
+          <div className={cn(
+            'font-bold text-foreground',
+            size === 'hero' ? 'text-5xl lg:text-7xl' : size === 'large' ? 'text-4xl lg:text-5xl' : 'text-2xl'
+          )}>
             {value}
           </div>
-          
+
           {delta && (
             <div className="flex items-center gap-2">
-              <Badge 
+              <Badge
                 variant={delta.isPositive ? 'default' : 'destructive'}
-                className="text-xs"
+                className={cn(
+                  size === 'hero' ? 'text-sm' : 'text-xs'
+                )}
               >
                 {delta.isPositive ? '+' : ''}{delta.value.toFixed(1)}%
               </Badge>
               {delta.label && (
-                <span className="text-xs text-muted-foreground">
+                <span className={cn(
+                  'text-muted-foreground',
+                  size === 'hero' ? 'text-sm' : 'text-xs'
+                )}>
                   {delta.label}
                 </span>
               )}
             </div>
           )}
-          
-          {hint && (
-            <p className="text-xs text-muted-foreground">
-              {hint}
-            </p>
-          )}
 
           {details && details.length > 0 && (
             <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
               {details.map((detail, idx) => (
-                <div key={idx} className="flex items-center justify-between text-xs">
+                <div key={idx} className={cn(
+                  'flex items-center justify-between',
+                  size === 'hero' ? 'text-sm' : 'text-xs'
+                )}>
                   <span className="text-muted-foreground">{detail.label}</span>
                   <span className="font-medium text-foreground">{detail.value}</span>
                 </div>
@@ -114,7 +135,16 @@ export const MetricCard: React.FC<MetricCardProps> = ({
             </div>
           )}
         </div>
+
+        {hint && (
+          <div className={cn(
+            'mt-3 text-muted-foreground',
+            size === 'hero' ? 'text-base' : 'text-xs'
+          )}>
+            {hint}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
-}
+})

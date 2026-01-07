@@ -3,9 +3,11 @@ import { supabase } from '@/lib/supabase'
 
 export interface AIUsageStatus {
   currentCount: number
-  dailyLimit: number
+  monthlyLimit: number
   remaining: number
-  resetAt: string
+  percentage: number
+  storeId: string
+  storeName: string
   isLimited: boolean
 }
 
@@ -16,13 +18,14 @@ export interface AIUsageLimitResult {
   refresh: () => Promise<void>
 }
 
-export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult {
+export function useAIUsageLimit(userId: string | undefined, selectedStoreId?: string): AIUsageLimitResult {
   const [status, setStatus] = useState<AIUsageStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const fetchUsageStatus = useCallback(async () => {
-    if (!userId || !supabase) {
+    // Skip for demo users (they use useDemoAIUsage instead)
+    if (!userId || !supabase || userId === 'demo-user') {
       setStatus(null)
       setLoading(false)
       return
@@ -32,21 +35,81 @@ export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult 
       setLoading(true)
       setError(null)
 
-      const { data, error: rpcError } = await supabase.rpc('get_user_usage_status', {
-        p_user_id: userId
-      })
+      // Get user's organization and store
+      const { data: memberData, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id, store_id, role')
+        .eq('user_id', userId)
+        .maybeSingle()
 
-      if (rpcError) {
-        console.error('Failed to fetch usage status:', rpcError)
-        setError(rpcError.message)
+      if (memberError) throw memberError
+      if (!memberData) {
         setStatus(null)
-      } else if (data) {
+        setLoading(false)
+        return
+      }
+
+      // Determine which store to use: selected store (if provided and valid) or assigned store
+      let targetStoreId = memberData.store_id
+
+      // If a specific store is selected and user has permission to view it
+      if (selectedStoreId && selectedStoreId !== 'all') {
+        // Admin/Owner can view any store in their organization
+        if (memberData.role === 'admin' || memberData.role === 'owner') {
+          // Verify the selected store exists and belongs to the user's organization
+          const { data: selectedStore } = await supabase
+            .from('stores')
+            .select('id')
+            .eq('id', selectedStoreId)
+            .eq('organization_id', memberData.organization_id)
+            .maybeSingle()
+
+          if (selectedStore) {
+            targetStoreId = selectedStoreId
+          }
+        } else {
+          // Non-admin users can only view their assigned store
+          if (selectedStoreId === memberData.store_id) {
+            targetStoreId = selectedStoreId
+          }
+        }
+      }
+
+      if (!targetStoreId) {
+        setStatus(null)
+        setLoading(false)
+        return
+      }
+
+      // Get store name
+      const { data: storeData } = await supabase
+        .from('stores')
+        .select('name')
+        .eq('id', targetStoreId)
+        .single()
+
+      // Get store usage status
+      const { data: usageData, error: usageError } = await supabase.rpc(
+        'get_store_usage_status',
+        {
+          p_store_id: targetStoreId,
+          p_organization_id: memberData.organization_id
+        }
+      )
+
+      if (usageError) {
+        console.error('Failed to fetch usage status:', usageError)
+        setError(usageError.message)
+        setStatus(null)
+      } else if (usageData) {
         setStatus({
-          currentCount: data.current_count ?? 0,
-          dailyLimit: data.daily_limit ?? 5,
-          remaining: data.remaining ?? 0,
-          resetAt: data.reset_at ?? new Date().toISOString(),
-          isLimited: data.is_limited ?? false
+          currentCount: usageData.current_usage ?? 0,
+          monthlyLimit: usageData.limit ?? 100,
+          remaining: usageData.remaining ?? 0,
+          percentage: usageData.percentage ?? 0,
+          storeId: targetStoreId,
+          storeName: storeData?.name || '不明な店舗',
+          isLimited: !usageData.can_use
         })
       }
     } catch (err) {
@@ -56,7 +119,7 @@ export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult 
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [userId, selectedStoreId])
 
   const refresh = useCallback(async () => {
     await fetchUsageStatus()
@@ -65,7 +128,8 @@ export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult 
   useEffect(() => {
     fetchUsageStatus()
 
-    if (!userId || !supabase) return
+    // Skip realtime subscription for demo users
+    if (!userId || !supabase || userId === 'demo-user') return
 
     const channel = supabase
       .channel('ai-usage-changes')
@@ -74,8 +138,8 @@ export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult 
         {
           event: '*',
           schema: 'public',
-          table: 'ai_usage_tracking',
-          filter: `user_id=eq.${userId}`
+          table: 'ai_usage_limits',
+          filter: `store_id=eq.${status?.storeId}`
         },
         () => {
           fetchUsageStatus()
@@ -86,7 +150,7 @@ export function useAIUsageLimit(userId: string | undefined): AIUsageLimitResult 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, fetchUsageStatus])
+  }, [userId, fetchUsageStatus, status?.storeId])
 
   return {
     status,

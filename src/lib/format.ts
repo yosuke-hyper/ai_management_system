@@ -11,6 +11,14 @@ export const formatPercent = (value: number): string => {
   return `${value.toFixed(1)}%`
 }
 
+export const formatProfitMargin = (profit: number, sales: number): string => {
+  if (sales === 0) {
+    return '-'
+  }
+  const margin = (profit / sales) * 100
+  return `${margin.toFixed(1)}%`
+}
+
 export const formatNumber = (value: number): string => {
   return value.toLocaleString('ja-JP')
 }

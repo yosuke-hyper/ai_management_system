@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Send, 
-  Bot, 
-  User, 
-  Sparkles, 
-  TrendingUp, 
+import {
+  Send,
+  Bot,
+  User,
+  Sparkles,
+  TrendingUp,
   TrendingDown,
   BarChart3,
   PieChart,
@@ -28,6 +28,8 @@ import { formatCurrency, formatPercent } from '../../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Cell, LineChart, Line, Area, AreaChart } from 'recharts';
+import { AiAvatar } from '../Avatar/AiAvatar';
+import { useAvatar } from '../../contexts/AvatarContext';
 
 interface Message {
   id: string;
@@ -48,12 +50,13 @@ interface AIChatPageProps {
   user?: { name: string; role: string } | null;
 }
 
-export const AIChatPage: React.FC<AIChatPageProps> = ({ 
-  reports, 
-  stores, 
+export const AIChatPage: React.FC<AIChatPageProps> = ({
+  reports,
+  stores,
   selectedStoreId,
-  user 
+  user
 }) => {
+  const { equippedItems } = useAvatar();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -71,6 +74,7 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isReadyToSend, setIsReadyToSend] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -736,10 +740,71 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
     setInputMessage(suggestion);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  // 時間帯別サジェストを取得
+  const getTimeSuggestions = (): string[] => {
+    const hour = new Date().getHours();
+
+    // 朝（06:00 - 10:59）
+    if (hour >= 6 && hour < 11) {
+      return ['今日の天気は？', 'ランチの目標設定', '昨日の売上確認'];
+    }
+    // 昼（11:00 - 16:59）
+    else if (hour >= 11 && hour < 17) {
+      return ['ランチの売上分析', '休憩入れる？', '今の原価率は？'];
+    }
+    // 夜（17:00 - 05:59）
+    else {
+      return ['日報を入力する', '今日の振り返り', '明日の仕込み予測'];
+    }
+  };
+
+  // サジェストボタンクリック時に自動送信
+  const handleSuggestionSend = async (suggestion: string) => {
+    if (isLoading) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: suggestion,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    // リアルなAI処理時間をシミュレート
+    setTimeout(() => {
+      const response = generateVisualResponse(suggestion);
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: response.content,
+        visualData: response.visualData,
+        suggestions: response.suggestions,
+        timestamp: new Date()
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+      setIsLoading(false);
+    }, 1500 + Math.random() * 1000);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputMessage(e.target.value);
+    setIsReadyToSend(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
       e.preventDefault();
-      handleSendMessage();
+      if (!inputMessage.trim()) return;
+
+      if (isReadyToSend) {
+        handleSendMessage();
+        setIsReadyToSend(false);
+      } else {
+        setIsReadyToSend(true);
+      }
     }
   };
 
@@ -759,9 +824,24 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* ヘッダー */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg p-6">
+    <>
+      <style>
+        {`
+          .ai-avatar-float-none {
+            animation: none !important;
+          }
+          .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          }
+          .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+          }
+        `}
+      </style>
+      <div className="max-w-6xl mx-auto space-y-6">
+        {/* ヘッダー */}
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-white/20 rounded-lg">
@@ -790,12 +870,50 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* メッセージエリア */}
         <div className="lg:col-span-3">
-          <Card className="h-[600px] flex flex-col">
-            <CardHeader className="pb-3 border-b border-gray-200">
+          <Card className="h-[600px] flex flex-col relative overflow-hidden" style={{ backgroundColor: '#fdfbf7' }}>
+            <style>
+              {`
+                .ai-bubble-page {
+                  position: relative;
+                  background: white;
+                  padding: 16px 20px;
+                  border-radius: 20px;
+                  box-shadow: 0 2px 8px rgba(251, 146, 60, 0.15);
+                }
+                .ai-bubble-page::after {
+                  content: '';
+                  position: absolute;
+                  bottom: -8px;
+                  left: 20px;
+                  width: 0;
+                  height: 0;
+                  border-left: 10px solid transparent;
+                  border-right: 10px solid transparent;
+                  border-top: 10px solid white;
+                  filter: drop-shadow(0 2px 3px rgba(251, 146, 60, 0.1));
+                }
+                .user-bubble-page {
+                  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                  padding: 12px 18px;
+                  border-radius: 18px;
+                  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
+                }
+                @keyframes bounce-talk-page {
+                  0%, 100% { transform: translateY(0); }
+                  25% { transform: translateY(-8px); }
+                  50% { transform: translateY(0); }
+                  75% { transform: translateY(-4px); }
+                }
+                .avatar-talking-page {
+                  animation: bounce-talk-page 0.6s ease-in-out infinite;
+                }
+              `}
+            </style>
+            <CardHeader className="pb-3 border-b border-orange-100" style={{ backgroundColor: '#fff9f5' }}>
               <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-blue-600" />
-                  AIアナリスト会話
+                <CardTitle className="flex items-center gap-3 text-gray-800">
+                  <span className="text-2xl">💬</span>
+                  <span>AIアナリスト会話</span>
                 </CardTitle>
                 <Button
                   variant="outline"
@@ -808,120 +926,166 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
                 </Button>
               </div>
             </CardHeader>
-            
-            <CardContent className="flex-1 overflow-y-auto p-4 space-y-6">
+
+            <CardContent className="flex-1 overflow-y-auto p-6 space-y-6" style={{ backgroundColor: '#fdfbf7' }}>
               {messages.map((message) => (
-                <div key={message.id} className="space-y-4">
-                  <div className={`flex gap-4 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {message.type === 'ai' && (
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-                        <Bot className="w-5 h-5 text-white" />
+                <div key={message.id} className="space-y-2">
+                  {message.type === 'ai' ? (
+                    <div className="flex gap-2 items-start">
+                      <div className="max-w-[85%] lg:max-w-[75%]">
+                        <div className="ai-bubble-page">
+                          <div className="text-sm leading-relaxed whitespace-pre-line text-gray-800">
+                            {message.content}
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1 ml-2">
+                          {message.timestamp.toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </p>
+
+                        {/* 視覚的データの表示 */}
+                        {message.visualData && renderVisualData(message.visualData)}
+
+                        {/* 提案ボタン */}
+                        {message.suggestions && (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-xs text-gray-500 flex items-center gap-1 ml-2">
+                              <Lightbulb className="w-3 h-3" />
+                              おすすめの分析:
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {message.suggestions.map((suggestion, index) => (
+                                <Button
+                                  key={index}
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleSuggestionClick(suggestion)}
+                                  className="text-xs hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700 transition-all duration-200"
+                                >
+                                  {suggestion}
+                                  <ChevronRight className="w-3 h-3 ml-1" />
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                    <div className={`max-w-[80%] ${message.type === 'user' ? 'order-1' : ''}`}>
-                      <div className={`px-6 py-4 rounded-2xl text-sm leading-relaxed ${
-                        message.type === 'user'
-                          ? 'bg-blue-600 text-white rounded-br-md'
-                          : 'bg-gray-100 text-gray-900 rounded-bl-md'
-                      }`}>
-                        <div className="whitespace-pre-line">{message.content}</div>
-                        <p className={`text-xs mt-2 ${
-                          message.type === 'user' ? 'text-blue-100' : 'text-gray-500'
-                        }`}>
-                          {message.timestamp.toLocaleTimeString('ja-JP', { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 items-start justify-end">
+                      <div className="max-w-[75%] lg:max-w-[60%]">
+                        <div className="user-bubble-page">
+                          <div className="text-sm leading-relaxed whitespace-pre-line text-white">
+                            {message.content}
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1 mr-2 text-right">
+                          {message.timestamp.toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit'
                           })}
                         </p>
                       </div>
-                      
-                      {/* 視覚的データの表示 */}
-                      {message.visualData && renderVisualData(message.visualData)}
-                      
-                      {/* 提案ボタン */}
-                      {message.type === 'ai' && message.suggestions && (
-                        <div className="mt-4 space-y-2">
-                          <p className="text-xs text-gray-500 flex items-center gap-1">
-                            <Lightbulb className="w-3 h-3" />
-                            おすすめの分析:
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {message.suggestions.map((suggestion, index) => (
-                              <Button
-                                key={index}
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleSuggestionClick(suggestion)}
-                                className="text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-all duration-200"
-                              >
-                                {suggestion}
-                                <ChevronRight className="w-3 h-3 ml-1" />
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    {message.type === 'user' && (
-                      <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center flex-shrink-0">
+                      <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
                         <User className="w-5 h-5 text-gray-600" />
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ))}
-              
+
+              {/* ローディング表示 */}
               {isLoading && (
-                <div className="flex gap-4 justify-start">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-                    <Bot className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="bg-gray-100 px-6 py-4 rounded-2xl rounded-bl-md max-w-[80%]">
-                    <div className="flex items-center gap-3">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      </div>
-                      <span className="text-sm text-gray-600">高度分析処理中...</span>
-                      <Sparkles className="w-4 h-4 text-purple-500 animate-pulse" />
+                <div className="flex justify-start">
+                  <div className="ai-bubble-page">
+                    <div className="flex gap-1.5">
+                      <div className="w-2.5 h-2.5 bg-orange-400 rounded-full animate-bounce"></div>
+                      <div className="w-2.5 h-2.5 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                      <div className="w-2.5 h-2.5 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
                     </div>
                   </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </CardContent>
-            
-            {/* 入力エリア */}
-            <div className="p-4 border-t border-gray-200">
-              <div className="flex gap-3">
-                <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="例: 今月の業績サマリーを表示"
-                    className="w-full px-4 py-3 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 focus:bg-white transition-all duration-200"
-                    disabled={isLoading}
+
+            {/* サジェストボタン（Chips） */}
+            <div className="px-4 pt-3 pb-3 border-t border-orange-100 bg-white">
+              <div className="overflow-x-auto hide-scrollbar">
+                <div className="flex gap-2 pb-1">
+                  {getTimeSuggestions().map((suggestion, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleSuggestionSend(suggestion)}
+                      disabled={isLoading}
+                      className="flex-shrink-0 px-4 py-2.5 text-sm font-medium bg-orange-50 border-2 border-orange-200 text-orange-700 rounded-full hover:bg-orange-100 hover:border-orange-400 hover:text-orange-800 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-sm hover:shadow-md"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 下部エリア：入力フィールド + Avatar */}
+            <div className="px-6 py-4 border-t border-orange-100 bg-white">
+              <div className="flex items-end gap-4">
+                {/* Avatar - 左側に配置 */}
+                <div className={`flex-shrink-0 ${isLoading ? 'avatar-talking-page' : ''}`}>
+                  <AiAvatar
+                    emotion={isLoading ? 'thinking' : 'happy'}
+                    size={120}
+                    fixed={false}
+                    className="ai-avatar-float-none"
+                    equippedItems={equippedItems}
                   />
                 </div>
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={isLoading || !inputMessage.trim()}
-                  className="px-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl"
-                >
-                  {isLoading ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
-                </Button>
+
+                {/* 入力エリア */}
+                <div className="flex-1 flex flex-col gap-1">
+                  <div className="flex gap-2">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={inputMessage}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder="しばちゃんに質問してみよう..."
+                        className={`w-full px-4 py-3 border-2 rounded-xl focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none text-gray-800 placeholder-gray-400 transition-all ${
+                          isReadyToSend
+                            ? 'border-orange-500 bg-orange-100/50'
+                            : 'border-orange-200 bg-orange-50/30'
+                        }`}
+                        disabled={isLoading}
+                      />
+                      {isReadyToSend && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-orange-600 font-medium">
+                          Enterで送信
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      onClick={() => {
+                        handleSendMessage();
+                        setIsReadyToSend(false);
+                      }}
+                      disabled={isLoading || !inputMessage.trim()}
+                      className="px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 rounded-xl"
+                    >
+                      {isLoading ? (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 ml-1">
+                    {isReadyToSend ? 'もう一度Enterで送信、または内容を編集' : 'Enterキーで確定'}
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                <Zap className="w-3 h-3" />
-                Enter送信 | 高度なデータ分析とビジュアル化に対応
-              </p>
             </div>
           </Card>
         </div>
@@ -1018,6 +1182,7 @@ export const AIChatPage: React.FC<AIChatPageProps> = ({
           </Card>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };

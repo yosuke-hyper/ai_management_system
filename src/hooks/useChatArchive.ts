@@ -10,6 +10,7 @@ import {
   type Message,
   type Conversation
 } from '../services/chatArchive'
+import { getDemoSessionId } from './useDemoAIUsage'
 
 export function useChatArchive(
   userId: string,
@@ -24,13 +25,25 @@ export function useChatArchive(
   const [loading, setLoading] = useState(false)
 
   const loadConversations = useCallback(async () => {
-    const { data } = await listConversations()
-    setConversations(data ?? [])
+    try {
+      const demoSessionId = getDemoSessionId()
+      const { data, error } = await listConversations({ demoSessionId })
+      if (error) {
+        console.error('Failed to load conversations:', error)
+        setConversations([])
+        return
+      }
+      setConversations(data ?? [])
+    } catch (err) {
+      console.error('Error loading conversations:', err)
+      setConversations([])
+    }
   }, [])
 
   const startNewConversation = useCallback(
     async (storeId: string = initialStoreId, title?: string) => {
-      const { data, error } = await createConversation(userId, storeId, title)
+      const demoSessionId = getDemoSessionId()
+      const { data, error } = await createConversation(userId, storeId, title, demoSessionId)
       if (!error && data) {
         setConversationId(data.id)
         localStorage.setItem('last_conv', data.id)
@@ -55,6 +68,7 @@ export function useChatArchive(
     async (content: string) => {
       let conv = conversationId
       if (!conv) {
+        console.log('📝 No conversation ID, creating new conversation')
         const { data, error: convError } = await startNewConversation(initialStoreId, '新しいチャット')
         conv = data?.id ?? null
         if (!conv || convError) {
@@ -62,7 +76,23 @@ export function useChatArchive(
         }
       }
 
-      const { data, error } = await addMessage(conv, 'user', content)
+      // Try to add message, but if conversation doesn't exist, create a new one
+      let { data, error } = await addMessage(conv, 'user', content)
+
+      // If RLS error (conversation doesn't exist or not accessible), create new conversation
+      if (error && (error as any).code === '42501') {
+        console.log('⚠️ Conversation not accessible, creating new one')
+        const { data: newConv, error: convError } = await startNewConversation(initialStoreId, '新しいチャット')
+        conv = newConv?.id ?? null
+        if (!conv || convError) {
+          return { data: null, error: convError || { message: '会話の作成に失敗しました' } }
+        }
+        // Retry adding message to new conversation
+        const result = await addMessage(conv, 'user', content)
+        data = result.data
+        error = result.error
+      }
+
       if (data) {
         setMessages(prev => [...prev, data])
       }
@@ -85,9 +115,10 @@ export function useChatArchive(
   )
 
   const renameConversation = useCallback(
-    async (title: string) => {
-      if (!conversationId) return
-      await updateConversation(conversationId, { title })
+    async (title: string, convId?: string) => {
+      const targetId = convId || conversationId
+      if (!targetId) return
+      await updateConversation(targetId, { title })
       await loadConversations()
     },
     [conversationId, loadConversations]
@@ -121,21 +152,37 @@ export function useChatArchive(
 
   const search = useCallback(async (q: string) => {
     if (!q.trim()) return []
-    const { data } = await searchConversations(q.trim())
+    const demoSessionId = getDemoSessionId()
+    const { data } = await searchConversations(q.trim(), demoSessionId)
     return data ?? []
   }, [])
 
   useEffect(() => {
-    (async () => {
-      await loadConversations()
-      const last = initialConversationId || localStorage.getItem('last_conv')
-      if (last) {
-        await loadMessages(last)
-      } else {
-        await startNewConversation(initialStoreId, '新しいチャット')
+    let mounted = true
+
+    const initialize = async () => {
+      if (!mounted) return
+
+      try {
+        await loadConversations()
+
+        if (!mounted) return
+
+        const last = initialConversationId || localStorage.getItem('last_conv')
+        if (last) {
+          await loadMessages(last)
+        }
+      } catch (err) {
+        console.error('Failed to initialize chat:', err)
       }
-    })()
-  }, [])
+    }
+
+    initialize()
+
+    return () => {
+      mounted = false
+    }
+  }, [initialConversationId, loadConversations, loadMessages])
 
   return {
     conversationId,

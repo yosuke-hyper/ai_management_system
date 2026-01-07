@@ -334,14 +334,14 @@ export const AIChatWidget: React.FC<AIChatWidgetProps> = ({ reports }) => {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-6 right-6 z-50">
+      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50" data-tour="ai-chat-widget">
         <Button
           onClick={() => setIsOpen(true)}
-          className="w-16 h-16 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
+          className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
         >
           <div className="relative">
-            <MessageCircle className="w-7 h-7 text-white" />
-            <Sparkles className="w-4 h-4 text-yellow-300 absolute -top-1 -right-1" />
+            <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
+            <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-300 absolute -top-1 -right-1" />
           </div>
         </Button>
       </div>
@@ -349,10 +349,10 @@ export const AIChatWidget: React.FC<AIChatWidgetProps> = ({ reports }) => {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
+    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 left-4 sm:left-auto z-50" data-tour="ai-chat-widget">
       <Card className={`${
-        isMinimized ? 'w-80 h-20' : 'w-96 h-[32rem]'
-      } shadow-2xl transition-all duration-300 border-0 overflow-hidden`}>
+        isMinimized ? 'w-full sm:w-80 h-20' : 'w-full sm:w-96 h-[calc(100vh-8rem)] sm:h-[32rem]'
+      } shadow-2xl transition-all duration-300 border-0 overflow-hidden max-w-full`}>
         <CardHeader className={`pb-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white ${isMinimized ? 'rounded-lg' : 'rounded-t-lg'}`}>
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -434,7 +434,7 @@ export const AIChatWidget: React.FC<AIChatWidgetProps> = ({ reports }) => {
                           <button
                             key={index}
                             onClick={() => handleSuggestionClick(suggestion)}
-                            className="px-3 py-1 bg-blue-50 text-blue-700 text-xs rounded-full hover:bg-blue-100 transition-colors border border-blue-200"
+                            className="px-3 py-2 sm:py-1.5 bg-blue-50 text-blue-700 text-xs sm:text-xs rounded-full hover:bg-blue-100 transition-colors border border-blue-200 min-h-[36px] sm:min-h-[32px]"
                           >
                             {suggestion}
                           </button>

@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/format'
-import { CircleCheck as CheckCircle, Save } from 'lucide-react'
+import { CircleCheck as CheckCircle, Save, Lock } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAdminData } from '@/contexts/AdminDataContext'
+import { useOrganization } from '@/contexts/OrganizationContext'
 import { upsertMonthlyExpense, getMonthlyExpenses } from '@/services/supabase'
 
 type MonthlyExpense = {
@@ -35,8 +36,9 @@ const thisMonth = () => new Date().toISOString().slice(0, 7) // YYYY-MM
 export const MonthlyExpenseForm: React.FC = () => {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const { user, getAccessibleStores } = useAuth()
+  const { user, getAccessibleStores, isDemoMode } = useAuth()
   const { stores: adminStores } = useAdminData()
+  const { organization } = useOrganization()
 
   const getInitialStoreId = () => {
     const paramStore = params.get('store')
@@ -82,12 +84,13 @@ export const MonthlyExpenseForm: React.FC = () => {
   useEffect(() => {
     const fetchExistingData = async () => {
       if (!user || !form.storeId || !form.month) return
-      
+
       try {
         const { data, error } = await getMonthlyExpenses({
           storeId: form.storeId,
           month: form.month,
-          userId: user.id
+          userId: user.id,
+          isDemoMode
         })
         
         if (!error && data && data.length > 0) {
@@ -134,7 +137,7 @@ export const MonthlyExpenseForm: React.FC = () => {
     }
     
     fetchExistingData()
-  }, [form.storeId, form.month, user])
+  }, [form.storeId, form.month, user, isDemoMode])
 
   const total = form.laborCostEmployee + form.laborCostPartTime + form.utilities + form.rent + form.consumables + form.promotion + form.cleaning + form.misc + form.communication + form.others
 
@@ -152,10 +155,16 @@ export const MonthlyExpenseForm: React.FC = () => {
       return
     }
     
+    if (!organization?.id) {
+      alert('組織情報が取得できませんでした。ページを再読み込みしてください。')
+      return
+    }
+
     try {
       const expenseData = {
         store_id: form.storeId,
         user_id: user.id,
+        organization_id: organization.id,
         month: form.month,
         labor_cost_employee: form.laborCostEmployee,
         labor_cost_part_time: form.laborCostPartTime,
@@ -201,12 +210,28 @@ export const MonthlyExpenseForm: React.FC = () => {
   }, [getAccessibleStores, user?.role, adminStores])
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">月次経費入力</h1>
-        <Badge>Demo / Local</Badge>
-      </div>
+    <>
+      {isDemoMode && (
+        <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <Lock className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900 mb-1">
+                閲覧専用モード
+              </h3>
+              <p className="text-sm text-amber-800">
+                デモモードでは入力・編集ができません。本登録すると、月次経費を入力して正確な損益分析が行えます。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="max-w-2xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">月次経費入力</h1>
+        </div>
 
+      <fieldset disabled={isDemoMode}>
       <Card>
         <CardHeader><CardTitle>対象</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-3">
@@ -301,6 +326,8 @@ export const MonthlyExpenseForm: React.FC = () => {
           保存しました。ダッシュボードに反映されます。
         </div>
       )}
-    </div>
+      </fieldset>
+      </div>
+    </>
   )
 }

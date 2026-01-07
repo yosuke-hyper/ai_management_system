@@ -30,7 +30,7 @@ export const PrivacyPolicy: React.FC = () => {
           <CardContent className="prose prose-slate max-w-none">
             <section className="mb-8">
               <p className="text-slate-700 leading-relaxed">
-                当社は、当社が提供する「AI経営管理システム」（以下「本サービス」といいます）におけるユーザーの個人情報の取扱いについて、以下のとおりプライバシーポリシー（以下「本ポリシー」といいます）を定めます。
+                当社は、当社が提供する「FoodValue for 経営分析」（以下「本サービス」といいます）におけるユーザーの個人情報の取扱いについて、以下のとおりプライバシーポリシー（以下「本ポリシー」といいます）を定めます。
               </p>
             </section>
 

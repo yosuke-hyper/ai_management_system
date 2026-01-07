@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
-import { getExpenseBaseline, ExpenseBaselineDb } from '@/services/supabase'
+import { getExpenseBaseline, ExpenseBaselineDb, getStores } from '@/services/supabase'
+import { useAuth } from '@/contexts/AuthContext'
+import { useOrganization } from '@/contexts/OrganizationContext'
 
 // ✅ "storeId-YYYY-MM" 単位で「存在しない」をキャッシュ（404再試行防止）
 const NO_BASELINE_CACHE = new Set<string>()
@@ -35,6 +37,8 @@ export interface MonthlyExpenseReference {
 export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
   // ✅ 安定キー生成
   const cacheKey = useMemo(() => (storeId && yyyymm) ? `${storeId}-${yyyymm}` : '', [storeId, yyyymm])
+  const { user } = useAuth()
+  const { organizationId } = useOrganization()
 
   const [daily, setDaily] = useState<DailyExpenseReference>({
     laborCost: 0,
@@ -68,7 +72,121 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
 
   useEffect(() => {
     const loadBaseline = async () => {
-      if (!cacheKey || storeId === 'all') {
+      // Set organization context for super admins
+      if (organizationId) {
+        const { setSelectedOrganizationContext } = await import('@/services/organizationService')
+        await setSelectedOrganizationContext(organizationId)
+      }
+
+      // Handle 'all' stores case - aggregate all store baselines
+      if (storeId === 'all' && yyyymm) {
+        setLoading(true)
+        try {
+          // Get all active stores
+          const { data: storesData, error: storesError } = await getStores()
+          if (storesError || !storesData) {
+            setLoading(false)
+            return
+          }
+
+          // Fetch expense baselines for all stores
+          const baselinePromises = storesData.map(store =>
+            getExpenseBaseline(store.id, yyyymm)
+          )
+          const baselineResults = await Promise.all(baselinePromises)
+
+          // Aggregate the data
+          let totalLaborCost = 0
+          let totalUtilities = 0
+          let totalRent = 0
+          let totalConsumables = 0
+          let totalPromotion = 0
+          let totalCleaning = 0
+          let totalMisc = 0
+          let totalCommunication = 0
+          let totalOthers = 0
+          let totalOpenDays = 0
+          let storeCount = 0
+
+          baselineResults.forEach(result => {
+            if (result.data) {
+              totalLaborCost += (result.data.labor_cost_employee || 0) + (result.data.labor_cost_part_time || 0)
+              totalUtilities += result.data.utilities || 0
+              totalRent += result.data.rent || 0
+              totalConsumables += result.data.consumables || 0
+              totalPromotion += result.data.promotion || 0
+              totalCleaning += result.data.cleaning || 0
+              totalMisc += result.data.misc || 0
+              totalCommunication += result.data.communication || 0
+              totalOthers += result.data.others || 0
+              totalOpenDays += result.data.open_days || 0
+              storeCount++
+            }
+          })
+
+          // Calculate average days per store
+          const avgOpenDays = storeCount > 0 ? Math.round(totalOpenDays / storeCount) : 1
+          const perDay = (value: number) => Math.round(value / Math.max(avgOpenDays, 1))
+
+          // Set daily averages (per day across all stores combined)
+          const dailyLaborCost = perDay(totalLaborCost)
+          const dailyUtilities = perDay(totalUtilities)
+          const dailyRent = perDay(totalRent)
+          const dailyConsumables = perDay(totalConsumables)
+          const dailyPromotion = perDay(totalPromotion)
+          const dailyCleaning = perDay(totalCleaning)
+          const dailyMisc = perDay(totalMisc)
+          const dailyCommunication = perDay(totalCommunication)
+          const dailyOthers = perDay(totalOthers)
+
+          const dailySumOther = dailyUtilities + dailyRent + dailyConsumables +
+                                dailyPromotion + dailyCleaning + dailyMisc +
+                                dailyCommunication + dailyOthers
+
+          setDaily({
+            laborCost: dailyLaborCost,
+            utilities: dailyUtilities,
+            rent: dailyRent,
+            consumables: dailyConsumables,
+            promotion: dailyPromotion,
+            cleaning: dailyCleaning,
+            misc: dailyMisc,
+            communication: dailyCommunication,
+            others: dailyOthers,
+            sumOther: dailySumOther,
+            totalExpense: dailyLaborCost + dailySumOther
+          })
+
+          // Set monthly totals (sum of all stores)
+          const monthlySumOther = totalUtilities + totalRent + totalConsumables +
+                                   totalPromotion + totalCleaning + totalMisc +
+                                   totalCommunication + totalOthers
+
+          setMonthlyTotal({
+            laborCost: totalLaborCost,
+            utilities: totalUtilities,
+            rent: totalRent,
+            consumables: totalConsumables,
+            promotion: totalPromotion,
+            cleaning: totalCleaning,
+            misc: totalMisc,
+            communication: totalCommunication,
+            others: totalOthers,
+            sumOther: monthlySumOther,
+            totalExpense: totalLaborCost + monthlySumOther
+          })
+
+          setMonthly(null) // No single baseline for 'all' stores
+        } catch (err) {
+          console.error('useExpenseBaseline (all stores): 予期しないエラー', err)
+          setError(err instanceof Error ? err.message : '予期しないエラーが発生しました')
+        } finally {
+          setLoading(false)
+        }
+        return
+      }
+
+      if (!cacheKey) {
         const emptyExpense = {
           laborCost: 0,
           utilities: 0,
@@ -229,7 +347,7 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
     }
 
     loadBaseline()
-  }, [cacheKey, storeId, yyyymm])
+  }, [cacheKey, storeId, yyyymm, user, organizationId])
 
   return {
     expenseBaseline: daily,

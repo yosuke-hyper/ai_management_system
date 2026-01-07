@@ -54,19 +54,83 @@ export interface Store {
   name: string;
   address: string;
   manager_id?: string;
+  manager?: string;
+  brand_id?: string;
+  brandId?: string;
+  change_fund?: number;
+  changeFund?: number;
   is_active?: boolean;
+  isActive?: boolean;
+  lunch_start_time?: string;
+  lunch_end_time?: string;
+  dinner_start_time?: string;
+  dinner_end_time?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface Brand {
+  id: string;
+  organizationId: string;
+  name: string;
+  displayName: string;
+  type: string;
+  defaultTargetProfitMargin: number;
+  defaultCostRate: number;
+  defaultLaborRate: number;
+  color: string;
+  icon: string;
+  description?: string;
+  settings?: Record<string, any>;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'staff' | 'manager' | 'admin';
+  role: 'staff' | 'manager' | 'admin' | 'owner';
   storeIds?: string[];
   lineUserId?: string;
   organizationId?: string;
+  isSuperAdmin?: boolean;
+  superAdminPermissions?: SuperAdminPermissions;
+}
+
+export interface SuperAdminPermissions {
+  view_all_errors: boolean;
+  view_all_organizations: boolean;
+  manage_subscriptions: boolean;
+  manage_users: boolean;
+  delete_data: boolean;
+}
+
+export interface SystemAdmin {
+  userId: string;
+  grantedBy?: string;
+  grantedAt: string;
+  expiresAt?: string;
+  permissions: SuperAdminPermissions;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminActivityLog {
+  id: string;
+  adminUserId: string;
+  action: string;
+  targetTable?: string;
+  targetId?: string;
+  targetOrganizationId?: string;
+  metadata?: Record<string, any>;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
 }
 
 export interface Organization {
@@ -89,7 +153,7 @@ export interface Organization {
 export interface OrganizationMember {
   organizationId: string;
   userId: string;
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'manager' | 'staff';
   joinedAt: string;
 }
 
@@ -109,7 +173,38 @@ export interface StoreVendorAssignment {
   displayOrder: number;
 }
 
+export interface VendorPurchase {
+  id: string;
+  dailyReportId: string;
+  vendorId: string;
+  vendorName: string;
+  vendorCategory: 'vegetable_meat' | 'seafood' | 'alcohol' | 'rice' | 'seasoning' | 'frozen' | 'dessert' | 'others';
+  amount: number;
+  date?: string;
+  createdAt?: string;
+}
+
+export interface VendorPurchaseSummary {
+  vendorId: string;
+  vendorName: string;
+  vendorCategory: 'vegetable_meat' | 'seafood' | 'alcohol' | 'rice' | 'seasoning' | 'frozen' | 'dessert' | 'others';
+  totalAmount: number;
+  purchaseCount: number;
+  percentage: number;
+}
+
 export type PeriodType = 'daily' | 'weekly' | 'monthly';
+
+// Operation type for lunch/dinner split
+export type OperationType = 'lunch' | 'dinner' | 'full_day';
+
+// Operation hours configuration
+export interface OperationHours {
+  lunchStartTime: string; // HH:MM:SS format
+  lunchEndTime: string;
+  dinnerStartTime: string;
+  dinnerEndTime: string;
+}
 
 // Google Sheets API用の型
 export interface SheetsData {
@@ -142,7 +237,12 @@ export interface DailyReportData {
   storeId: string
   storeName: string
   staffName: string
+  operationType: OperationType // 営業時間帯: lunch/dinner/full_day
   sales: number
+  salesCash10?: number // 現金売上（10%税率）
+  salesCash8?: number // 現金売上（8%税率）
+  salesCredit10?: number // クレジット売上（10%税率）
+  salesCredit8?: number // クレジット売上（8%税率）
   purchase: number
   laborCost: number
   utilities: number
@@ -154,9 +254,14 @@ export interface DailyReportData {
   communication: number
   others: number
   customers?: number
+  lunchCustomers?: number // ランチ客数
+  dinnerCustomers?: number // ディナー客数
   reportText: string
   vendorPurchases?: Record<string, number>
   createdAt: string
+  lastEditedBy?: string
+  lastEditedAt?: string
+  editCount?: number
 }
 
 // 目標データ型
@@ -180,6 +285,7 @@ export interface DailyTargetData {
   id: string
   storeId: string
   date: string // YYYY-MM-DD
+  operationType?: OperationType // 営業時間帯別の目標
   targetSales: number
   createdAt?: string
   updatedAt?: string

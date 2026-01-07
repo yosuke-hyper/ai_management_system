@@ -1,5 +1,5 @@
 import React from 'react'
-import { AlertCircle, CheckCircle, Clock } from 'lucide-react'
+import { AlertCircle, CheckCircle, Clock, Store, TrendingUp, Zap } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import type { AIUsageStatus } from '@/hooks/useAIUsageLimit'
@@ -8,12 +8,14 @@ interface AIUsageIndicatorProps {
   status: AIUsageStatus | null
   loading: boolean
   compact?: boolean
+  showStoreIcon?: boolean
 }
 
 export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
   status,
   loading,
-  compact = false
+  compact = false,
+  showStoreIcon = true
 }) => {
   if (loading) {
     return (
@@ -28,27 +30,16 @@ export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
     return null
   }
 
-  const isUnlimited = status.dailyLimit === -1
-  const usagePercent = isUnlimited ? 0 : Math.min((status.currentCount / status.dailyLimit) * 100, 100)
+  const isUnlimited = status.monthlyLimit === -1
+  const usagePercent = isUnlimited ? 0 : Math.min(status.percentage, 100)
   const isWarning = usagePercent >= 80 && usagePercent < 100
   const isError = usagePercent >= 100 || status.isLimited
-
-  const getTimeUntilReset = () => {
-    const now = new Date()
-    const resetTime = new Date(status.resetAt)
-    const diff = resetTime.getTime() - now.getTime()
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-
-    if (hours > 0) {
-      return `${hours}時間${minutes}分後`
-    }
-    return `${minutes}分後`
-  }
 
   if (compact) {
     return (
       <div className="flex items-center gap-2">
+        {showStoreIcon && <Store className="w-3 h-3 text-muted-foreground" />}
+        <span className="text-xs text-muted-foreground">{status.storeName}</span>
         {isUnlimited ? (
           <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-blue-300">
             無制限
@@ -65,7 +56,7 @@ export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
                   : 'bg-green-50 text-green-700 border-green-300'
               }
             >
-              {status.currentCount}/{status.dailyLimit}回
+              {status.currentCount}/{status.monthlyLimit}回
             </Badge>
           </>
         )}
@@ -74,35 +65,50 @@ export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 p-4 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg shadow-sm">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {isUnlimited ? (
-            <>
-              <CheckCircle className="w-4 h-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-700">AI利用: 無制限</span>
-            </>
-          ) : isError ? (
-            <>
-              <AlertCircle className="w-4 h-4 text-red-600" />
-              <span className="text-sm font-medium text-red-700">利用上限到達</span>
-            </>
-          ) : isWarning ? (
-            <>
-              <AlertCircle className="w-4 h-4 text-yellow-600" />
-              <span className="text-sm font-medium text-yellow-700">残りわずか</span>
-            </>
-          ) : (
-            <>
-              <CheckCircle className="w-4 h-4 text-green-600" />
-              <span className="text-sm font-medium text-green-700">利用可能</span>
-            </>
+          {showStoreIcon && (
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Store className="w-4 h-4 text-blue-600" />
+            </div>
           )}
+          <div>
+            <div className="text-xs text-muted-foreground">AI使用状況</div>
+            <div className="font-semibold text-foreground">{status.storeName}</div>
+          </div>
         </div>
         {!isUnlimited && (
-          <span className="text-sm font-medium text-foreground">
-            {status.remaining}回 / {status.dailyLimit}回
-          </span>
+          <div className="text-right">
+            <div className="text-xs text-muted-foreground">今月の使用</div>
+            <div className="text-lg font-bold text-foreground">
+              {status.currentCount}<span className="text-sm text-muted-foreground">/{status.monthlyLimit}回</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        {isUnlimited ? (
+          <>
+            <CheckCircle className="w-4 h-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-700">無制限プラン</span>
+          </>
+        ) : isError ? (
+          <>
+            <AlertCircle className="w-4 h-4 text-red-600" />
+            <span className="text-sm font-medium text-red-700">利用上限到達</span>
+          </>
+        ) : isWarning ? (
+          <>
+            <AlertCircle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm font-medium text-yellow-700">残りわずか（{status.remaining}回）</span>
+          </>
+        ) : (
+          <>
+            <Zap className="w-4 h-4 text-green-600" />
+            <span className="text-sm font-medium text-green-700">利用可能（残り{status.remaining}回）</span>
+          </>
         )}
       </div>
 
@@ -122,12 +128,11 @@ export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
               {isError
-                ? '明日リセットされます'
+                ? '来月リセットされます'
                 : `残り${status.remaining}回利用可能`}
             </span>
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {getTimeUntilReset()}にリセット
+            <span className="text-xs text-muted-foreground">
+              今月の使用状況
             </span>
           </div>
         </>
@@ -135,11 +140,11 @@ export const AIUsageIndicator: React.FC<AIUsageIndicatorProps> = ({
 
       {isError && (
         <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
-          本日の利用上限に達しました。基本的なデータ分析機能は引き続きご利用いただけます。
+          この店舗の月間利用上限に達しました。管理者にお問い合わせいただくか、来月までお待ちください。
         </div>
       )}
 
-      {isWarning && !isError && status.remaining <= 2 && (
+      {isWarning && !isError && status.remaining <= 10 && (
         <div className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2">
           残り{status.remaining}回です。計画的にご利用ください。
         </div>

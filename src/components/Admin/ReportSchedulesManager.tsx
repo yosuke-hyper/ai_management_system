@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Calendar, Plus, Edit2, Trash2, Power, PowerOff, Loader2 } from 'lucide-react';
 import { useReportSchedules, ReportSchedule } from '../../hooks/useAIReports';
-import { useStores } from '../../hooks/useStores';
+import { useAdminData } from '../../contexts/AdminDataContext';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 
 export function ReportSchedulesManager() {
   const { schedules, loading, createSchedule, updateSchedule, deleteSchedule, refetch } = useReportSchedules();
-  const { stores } = useStores();
+  const { stores } = useAdminData();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   if (loading) {

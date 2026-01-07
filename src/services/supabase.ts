@@ -1,10 +1,11 @@
-import { supabase, isSupabaseReady as isSupabaseConfigured } from '../lib/supabase'
+import { supabase, isSupabaseReady as isSupabaseConfigured, normalizeStoreId } from '../lib/supabase'
 
 // Re-export for convenience
 export { isSupabaseConfigured as isSupabaseReady }
 import { DailyReportData } from '@/types'
 import { isUUID } from '../lib/utils'
 import { getCurrentUserOrganizationId, withOrganizationId } from './organizationService'
+import { generateMockReports } from '@/lib/mock'
 
 // Types based on database schema
 export interface ProfileDb {
@@ -21,9 +22,34 @@ export interface StoreDb {
   name: string
   address: string
   manager_id?: string
+  brand_id?: string
   is_active?: boolean
+  change_fund?: number
+  lunch_start_time?: string
+  lunch_end_time?: string
+  dinner_start_time?: string
+  dinner_end_time?: string
   created_at?: string
   updated_at?: string
+}
+
+export interface BrandDb {
+  id: string
+  organization_id: string
+  name: string
+  display_name: string
+  type: string
+  default_target_profit_margin: number
+  default_cost_rate: number
+  default_labor_rate: number
+  color: string
+  icon: string
+  description?: string
+  settings?: any
+  is_active: boolean
+  display_order: number
+  created_at: string
+  updated_at: string
 }
 
 export interface DailyReportDb {
@@ -31,6 +57,7 @@ export interface DailyReportDb {
   date: string
   store_id: string
   user_id: string
+  operation_type: 'lunch' | 'dinner' | 'full_day'
   sales: number
   purchase: number
   labor_cost: number
@@ -44,6 +71,9 @@ export interface DailyReportDb {
   others: number
   customers?: number
   report_text?: string
+  last_edited_by?: string
+  last_edited_at?: string
+  edit_count?: number
   created_at?: string
   updated_at?: string
 }
@@ -56,6 +86,14 @@ export interface VendorDb {
   is_active: boolean
   created_at?: string
   updated_at?: string
+}
+
+export interface DailyReportVendorPurchaseDb {
+  id: string
+  daily_report_id: string
+  vendor_id: string
+  amount: number
+  created_at?: string
 }
 
 export interface StoreVendorAssignmentDb {
@@ -323,9 +361,31 @@ export const getStores = async () => {
     return { data: stores.filter((s: any) => s.is_active !== false), error: null }
   }
 
+  // 現在のユーザーを取得
+  const { data: { user } } = await supabase!.auth.getUser()
+  if (!user) {
+    console.error('❌ getStores: ユーザーが認証されていません')
+    return { data: [], error: { message: 'ユーザーが認証されていません' } }
+  }
+
+  const orgId = await getCurrentUserOrganizationId(user.id)
+  if (!orgId) {
+    console.error('❌ getStores: 組織IDが取得できません')
+    return { data: [], error: { message: '組織IDが取得できません' } }
+  }
+
   const { data, error } = await supabase!
     .from('stores')
-    .select('*')
+    .select(`
+      *,
+      brand:brands(
+        id,
+        name,
+        icon,
+        color
+      )
+    `)
+    .eq('organization_id', orgId)
     .eq('is_active', true)
     .order('name')
 
@@ -341,7 +401,15 @@ export const getUserStores = async (userId: string) => {
     .from('store_assignments')
     .select(`
       store_id,
-      stores!inner(*)
+      stores!inner(
+        *,
+        brand:brands(
+          id,
+          name,
+          icon,
+          color
+        )
+      )
     `)
     .eq('user_id', userId)
     .eq('stores.is_active', true)
@@ -354,6 +422,8 @@ export const createStore = async (storeData: {
   name: string
   address: string
   manager_id?: string
+  brand_id?: string
+  change_fund?: number
   is_active?: boolean
   user_id?: string
 }) => {
@@ -365,6 +435,7 @@ export const createStore = async (storeData: {
       name: storeData.name,
       address: storeData.address,
       manager_id: storeData.manager_id ?? null,
+      change_fund: storeData.change_fund ?? null,
       is_active: storeData.is_active ?? true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -374,16 +445,31 @@ export const createStore = async (storeData: {
   }
 
   try {
-    let insertData: any = {
-      ...storeData,
-      is_active: storeData.is_active ?? true
+    if (!storeData.user_id) {
+      return {
+        data: null,
+        error: {
+          message: 'ユーザーIDが指定されていません'
+        }
+      }
     }
 
-    if (storeData.user_id) {
-      const organizationId = await getCurrentUserOrganizationId(storeData.user_id)
-      if (organizationId) {
-        insertData.organization_id = organizationId
+    const organizationId = await getCurrentUserOrganizationId(storeData.user_id)
+    if (!organizationId) {
+      return {
+        data: null,
+        error: {
+          message: 'ユーザーの組織が見つかりません。組織に所属していることを確認してください。'
+        }
       }
+    }
+
+    // user_idを除外してinsertDataを作成
+    const { user_id, ...storeDataWithoutUserId } = storeData
+    const insertData: any = {
+      ...storeDataWithoutUserId,
+      organization_id: organizationId,
+      is_active: storeData.is_active ?? true
     }
 
     const { data, error } = await supabase!
@@ -393,6 +479,7 @@ export const createStore = async (storeData: {
       .single()
 
     if (error) {
+      // 権限エラー
       if (error.message?.includes('row-level security') || error.code === '42501') {
         return {
           data: null,
@@ -401,11 +488,31 @@ export const createStore = async (storeData: {
           }
         }
       }
+
+      // 契約店舗数超過エラー（トリガーからのエラー）
+      if (error.message?.includes('契約店舗数の上限') || error.message?.includes('店舗数')) {
+        return {
+          data: null,
+          error: {
+            message: error.message
+          }
+        }
+      }
+
       return { data: null, error }
     }
 
     return { data, error: null }
   } catch (error: any) {
+    // トリガーからの例外をキャッチ
+    if (error.message?.includes('契約店舗数の上限') || error.message?.includes('店舗数')) {
+      return {
+        data: null,
+        error: {
+          message: error.message
+        }
+      }
+    }
     return { data: null, error: { message: error.message || '店舗の作成に失敗しました' } }
   }
 }
@@ -485,10 +592,13 @@ export const removeUserFromStore = async (userId: string, storeId: string) => {
 // Daily Reports
 export const getDailyReports = async (filters: {
   storeId?: string
+  brandId?: string
   dateFrom?: string
   dateTo?: string
   userId?: string
+  operationType?: 'lunch' | 'dinner' | 'full_day'
 } = {}) => {
+
   // ✨ 未設定ならローカルストレージから取得
   if (!isSupabaseConfigured()) {
     const local: any[] = JSON.parse(localStorage.getItem('userReports') || '[]')
@@ -507,17 +617,46 @@ export const getDailyReports = async (filters: {
     return { data: [], error: null }
   }
 
+  let storeIdsForBrandFilter: string[] | undefined = undefined
+
+  if (filters.brandId && filters.brandId !== 'headquarters' && (!filters.storeId || filters.storeId === 'all')) {
+    console.log('🔍 getDailyReports: Filtering by brandId:', filters.brandId)
+    const { data: brandStores, error: brandStoresError } = await supabase!
+      .from('stores')
+      .select('id, name, brand_id')
+      .eq('brand_id', filters.brandId)
+
+    if (brandStoresError) {
+      console.error('❌ Failed to fetch stores for brand:', brandStoresError)
+    } else {
+      storeIdsForBrandFilter = brandStores?.map(s => s.id) || []
+      console.log('✅ Found stores for brand:', brandStores)
+      console.log('📍 Store IDs for filter:', storeIdsForBrandFilter)
+      if (storeIdsForBrandFilter.length === 0) {
+        console.log('⚠️ No stores found for this brand, returning empty array')
+        return { data: [], error: null }
+      }
+    }
+  }
+
   let query = supabase!
     .from('daily_reports')
     .select(`
       *,
-      stores!inner(name),
-      profiles!inner(name)
+      stores!inner(name, brand_id),
+      creator:profiles!daily_reports_user_id_fkey(name),
+      editor:profiles!daily_reports_last_edited_by_fkey(name)
     `)
     .order('date', { ascending: false })
 
   if (filters.storeId && filters.storeId !== 'all') {
+    console.log('🔍 Filtering by storeId:', filters.storeId)
     query = query.eq('store_id', filters.storeId)
+  } else if (storeIdsForBrandFilter && storeIdsForBrandFilter.length > 0) {
+    console.log('🔍 Filtering by brand store IDs:', storeIdsForBrandFilter)
+    query = query.in('store_id', storeIdsForBrandFilter)
+  } else {
+    console.log('🔍 No store or brand filter applied')
   }
 
   if (filters.dateFrom) {
@@ -532,6 +671,10 @@ export const getDailyReports = async (filters: {
     query = query.eq('user_id', filters.userId)
   }
 
+  if (filters.operationType) {
+    query = query.eq('operation_type', filters.operationType)
+  }
+
   const { data, error } = await query
 
   const transformedData = data?.map(report => ({
@@ -539,8 +682,13 @@ export const getDailyReports = async (filters: {
     date: report.date,
     storeId: report.store_id,
     storeName: report.stores.name,
-    staffName: report.profiles.name,
+    staffName: report.creator?.name || 'Unknown',
+    operationType: report.operation_type || 'dinner',
     sales: report.sales,
+    salesCash10: report.sales_cash_10 || 0,
+    salesCash8: report.sales_cash_8 || 0,
+    salesCredit10: report.sales_credit_10 || 0,
+    salesCredit8: report.sales_credit_8 || 0,
     purchase: report.purchase,
     laborCost: report.labor_cost,
     utilities: report.utilities,
@@ -554,7 +702,10 @@ export const getDailyReports = async (filters: {
     reportText: report.report_text || '',
     customers: report.customers || 0,
     vendorPurchases: {},  // 別途daily_report_vendor_purchasesテーブルから取得
-    createdAt: report.created_at || ''
+    createdAt: report.created_at || '',
+    lastEditedBy: report.editor?.name,
+    lastEditedAt: report.last_edited_at,
+    editCount: report.edit_count || 0
   }))
 
   return { data: transformedData, error }
@@ -583,10 +734,17 @@ export const createDailyReport = async (reportData: Omit<DailyReportData, 'id' |
       date: reportData.date,
       store_id: reportData.storeId,
       user_id: reportData.userId,
+      operation_type: reportData.operationType || 'dinner',
       sales: reportData.sales,
+      sales_cash_10: reportData.salesCash10 || 0,
+      sales_cash_8: reportData.salesCash8 || 0,
+      sales_credit_10: reportData.salesCredit10 || 0,
+      sales_credit_8: reportData.salesCredit8 || 0,
       purchase: reportData.purchase,
       labor_cost: reportData.laborCost,
       utilities: reportData.utilities,
+      rent: reportData.rent || 0,
+      consumables: reportData.consumables || 0,
       promotion: reportData.promotion,
       cleaning: reportData.cleaning,
       misc: reportData.misc,
@@ -638,7 +796,7 @@ export const createDailyReport = async (reportData: Omit<DailyReportData, 'id' |
   }
 }
 
-export const updateDailyReport = async (reportId: string, updates: Partial<DailyReportDb>) => {
+export const updateDailyReport = async (reportId: string, updates: Partial<DailyReportDb> & { vendorPurchases?: Record<string, number> }) => {
   // ✨ ローカルストレージIDの場合
   if (reportId.startsWith('local-') || !isSupabaseConfigured()) {
     const key = 'userReports'
@@ -661,14 +819,63 @@ export const updateDailyReport = async (reportId: string, updates: Partial<Daily
     return { data: updated, error: null }
   }
 
+  // vendorPurchasesを分離して処理
+  const { vendorPurchases, ...dbUpdates } = updates
+
   const { data, error } = await supabase!
     .from('daily_reports')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...dbUpdates, updated_at: new Date().toISOString() })
     .eq('id', reportId)
     .select()
     .single()
 
-  return { data, error }
+  if (error || !data) {
+    return { data, error }
+  }
+
+  // 業者別仕入データを更新（既存を削除して新規挿入）
+  if (vendorPurchases !== undefined) {
+    try {
+      // 既存の業者別仕入データを削除
+      await supabase!
+        .from('daily_report_vendor_purchases')
+        .delete()
+        .eq('daily_report_id', reportId)
+
+      // 新しいデータがある場合は挿入
+      if (Object.keys(vendorPurchases).length > 0) {
+        const { data: { user } } = await supabase!.auth.getUser()
+        if (!user) {
+          console.error('❌ updateDailyReport: ユーザーが認証されていません')
+          return { data, error: null }
+        }
+
+        const organizationId = await getCurrentUserOrganizationId(user.id)
+        const vendorPurchaseRecords = Object.entries(vendorPurchases)
+          .filter(([_, amount]) => amount > 0)
+          .map(([vendorId, amount]) => ({
+            daily_report_id: reportId,
+            vendor_id: vendorId,
+            amount: amount,
+            organization_id: organizationId
+          }))
+
+        if (vendorPurchaseRecords.length > 0) {
+          const { error: vendorError } = await supabase!
+            .from('daily_report_vendor_purchases')
+            .insert(vendorPurchaseRecords)
+
+          if (vendorError) {
+            console.error('業者別仕入データの更新に失敗:', vendorError)
+          }
+        }
+      }
+    } catch (vendorError) {
+      console.error('業者別仕入データの更新中にエラー:', vendorError)
+    }
+  }
+
+  return { data, error: null }
 }
 
 export const deleteDailyReport = async (reportId: string) => {
@@ -698,9 +905,23 @@ export const getVendors = async () => {
     return { data: vendors.filter((v: any) => v.is_active !== false), error: null }
   }
 
+  // 現在のユーザーを取得
+  const { data: { user } } = await supabase!.auth.getUser()
+  if (!user) {
+    console.error('❌ getVendors: ユーザーが認証されていません')
+    return { data: [], error: { message: 'ユーザーが認証されていません' } }
+  }
+
+  const orgId = await getCurrentUserOrganizationId(user.id)
+  if (!orgId) {
+    console.error('❌ getVendors: 組織IDが取得できません')
+    return { data: [], error: { message: '組織IDが取得できません' } }
+  }
+
   const { data, error } = await supabase!
     .from('vendors')
     .select('*')
+    .eq('organization_id', orgId)
     .eq('is_active', true)
     .order('name')
 
@@ -958,7 +1179,9 @@ export const getMonthlyExpenses = async (filters: {
   storeId?: string
   month?: string
   userId?: string
+  isDemoMode?: boolean
 } = {}) => {
+
   if (!isSupabaseConfigured()) {
     return { data: [], error: null }
   }
@@ -966,6 +1189,39 @@ export const getMonthlyExpenses = async (filters: {
   if (filters.storeId && filters.storeId !== 'all' && !isUUID(filters.storeId)) {
     console.warn('Invalid store UUID provided:', filters.storeId)
     return { data: [], error: null }
+  }
+
+  if (filters.isDemoMode) {
+    let query = supabase!
+      .from('demo_monthly_expenses')
+      .select(`
+        *,
+        demo_stores!inner(name)
+      `)
+      .order('month', { ascending: false })
+
+    if (filters.storeId && filters.storeId !== 'all') {
+      query = query.eq('demo_store_id', filters.storeId)
+    }
+
+    if (filters.month) {
+      query = query.eq('month', filters.month)
+    }
+
+    const { data, error } = await query
+
+    if (!error && data) {
+      return {
+        data: data.map((item: any) => ({
+          ...item,
+          store_id: item.demo_store_id,
+          stores: item.demo_stores
+        })),
+        error: null
+      }
+    }
+
+    return { data, error }
   }
 
   let query = supabase!
@@ -1031,6 +1287,7 @@ export const getTargets = async (filters: {
   storeId?: string
   period?: string
 } = {}) => {
+
   if (!isSupabaseConfigured()) {
     console.log('🔧 getTargets: Supabase未設定、LocalStorageから読み込み')
     let targets = readMockTargets()
@@ -1047,13 +1304,22 @@ export const getTargets = async (filters: {
     return { data: targets, error: null }
   }
 
+  const orgId = await getCurrentUserOrganizationId()
+  if (!orgId) {
+    console.error('🔴 getTargets: organization_idが取得できません')
+    return { data: [], error: new Error('組織IDが見つかりません') }
+  }
+
+  const sid = normalizeStoreId(filters.storeId)
+
   let query = supabase!
     .from('targets')
     .select('*')
+    .eq('organization_id', orgId)
     .order('period', { ascending: false })
 
-  if (filters.storeId && filters.storeId !== 'all') {
-    query = query.eq('store_id', filters.storeId)
+  if (sid) {
+    query = query.eq('store_id', sid)
   }
 
   if (filters.period) {
@@ -1119,14 +1385,20 @@ export const upsertTarget = async (targetData: Omit<TargetDb, 'id' | 'created_at
     return { data: savedTarget, error: null }
   }
 
-  const dataToUpsert = { ...targetData, updated_at: new Date().toISOString() }
+  const orgId = await getCurrentUserOrganizationId()
+  if (!orgId) {
+    console.error('🔴 upsertTarget: organization_idが取得できません')
+    return { data: null, error: new Error('組織IDが見つかりません') }
+  }
+
+  const dataToUpsert = { ...targetData, organization_id: orgId, updated_at: new Date().toISOString() }
   console.log('🔵 supabase.ts: upsertするデータ', dataToUpsert)
 
   const { data, error } = await supabase!
     .from('targets')
     .upsert(
       dataToUpsert,
-      { onConflict: 'store_id,period' }
+      { onConflict: 'store_id,period,organization_id' }
     )
     .select()
     .single()
@@ -1145,17 +1417,25 @@ export const deleteTarget = async (storeId: string, period: string) => {
     return { error: null }
   }
 
+  const orgId = await getCurrentUserOrganizationId()
+  if (!orgId) {
+    console.error('🔴 deleteTarget: organization_idが取得できません')
+    return { error: new Error('組織IDが見つかりません') }
+  }
+
   const { error } = await supabase!
     .from('targets')
     .delete()
     .eq('store_id', storeId)
     .eq('period', period)
+    .eq('organization_id', orgId)
 
   return { error }
 }
 
 // Expense Baselines (参考経費)
 export const getExpenseBaseline = async (storeId: string, month: string) => {
+
   if (!isSupabaseConfigured()) {
     console.log('🔧 getExpenseBaseline: Supabase未設定、LocalStorageから読み込み')
     const baselines = readMockExpenseBaselines()
@@ -1163,10 +1443,15 @@ export const getExpenseBaseline = async (storeId: string, month: string) => {
     return { data: baseline, error: null }
   }
 
+  const sid = normalizeStoreId(storeId)
+  if (!sid) {
+    return { data: null, error: null }
+  }
+
   const { data, error } = await supabase!
     .from('expense_baselines')
     .select('*')
-    .eq('store_id', storeId)
+    .eq('store_id', sid)
     .eq('month', month)
     .maybeSingle()
 
@@ -1178,13 +1463,26 @@ export const upsertExpenseBaseline = async (
   month: string,
   payload: Partial<ExpenseBaselineDb>
 ) => {
+  const { data: { user } } = await supabase!.auth.getUser()
+  if (!user) {
+    return { data: null, error: new Error('ユーザーが認証されていません') }
+  }
+
+  const organizationId = await getCurrentUserOrganizationId(user.id)
+  if (!organizationId) {
+    return { data: null, error: new Error('組織IDが取得できません') }
+  }
+
   const baselineData = {
     store_id: storeId,
     month,
+    organization_id: organizationId,
     open_days: payload.open_days ?? 30,
     labor_cost_employee: payload.labor_cost_employee ?? 0,
     labor_cost_part_time: payload.labor_cost_part_time ?? 0,
     utilities: payload.utilities ?? 0,
+    rent: payload.rent ?? 0,
+    consumables: payload.consumables ?? 0,
     promotion: payload.promotion ?? 0,
     cleaning: payload.cleaning ?? 0,
     misc: payload.misc ?? 0,
@@ -1277,6 +1575,7 @@ export const getSummaryData = async (filters: {
 
 // Daily Targets
 export const getDailyTarget = async (storeId: string, date: string) => {
+
   if (!isSupabaseConfigured()) {
     console.log('🔧 getDailyTarget: Supabase未設定、LocalStorageから読み込み')
     const targets = readMockDailyTargets()
@@ -1284,10 +1583,15 @@ export const getDailyTarget = async (storeId: string, date: string) => {
     return { data: target, error: null }
   }
 
+  const sid = normalizeStoreId(storeId)
+  if (!sid) {
+    return { data: null, error: null }
+  }
+
   const { data, error } = await supabase!
     .from('daily_targets')
     .select('*')
-    .eq('store_id', storeId)
+    .eq('store_id', sid)
     .eq('date', date)
     .maybeSingle()
 
@@ -1299,6 +1603,7 @@ export const getDailyTargets = async (filters: {
   dateFrom?: string
   dateTo?: string
 } = {}) => {
+
   if (!isSupabaseConfigured()) {
     console.log('🔧 getDailyTargets: Supabase未設定、LocalStorageから読み込み')
     let targets = readMockDailyTargets()
@@ -1420,6 +1725,113 @@ export const deleteDailyTarget = async (storeId: string, date: string) => {
   return { error }
 }
 
+// ============================================
+// Brands (業態/ブランド) CRUD
+// ============================================
+
+export const getBrands = async (filters?: {
+  organizationId?: string
+  isActive?: boolean
+}) => {
+  if (!isSupabaseConfigured()) {
+    console.log('🔧 getBrands: Supabase未設定、空配列を返却')
+    return { data: [], error: null }
+  }
+
+  let query = supabase!.from('brands').select('*').order('display_order', { ascending: true })
+
+  if (filters?.organizationId) {
+    query = query.eq('organization_id', filters.organizationId)
+  }
+
+  if (filters?.isActive !== undefined) {
+    query = query.eq('is_active', filters.isActive)
+  }
+
+  const { data, error } = await query
+  return { data, error }
+}
+
+export const getBrandById = async (id: string) => {
+  if (!isSupabaseConfigured()) {
+    return { data: null, error: { message: 'Supabase未設定' } }
+  }
+
+  const { data, error } = await supabase!
+    .from('brands')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  return { data, error }
+}
+
+export const createBrand = async (brandData: {
+  organizationId: string
+  name: string
+  displayName: string
+  type: string
+  defaultTargetProfitMargin?: number
+  defaultCostRate?: number
+  defaultLaborRate?: number
+  color?: string
+  icon?: string
+  description?: string
+  displayOrder?: number
+}) => {
+  if (!isSupabaseConfigured()) {
+    return { data: null, error: { message: 'Supabase未設定' } }
+  }
+
+  const { data, error } = await supabase!
+    .from('brands')
+    .insert({
+      organization_id: brandData.organizationId,
+      name: brandData.name,
+      display_name: brandData.displayName,
+      type: brandData.type,
+      default_target_profit_margin: brandData.defaultTargetProfitMargin ?? 20,
+      default_cost_rate: brandData.defaultCostRate ?? 30,
+      default_labor_rate: brandData.defaultLaborRate ?? 25,
+      color: brandData.color ?? '#3B82F6',
+      icon: brandData.icon ?? '🏪',
+      description: brandData.description,
+      display_order: brandData.displayOrder ?? 0
+    })
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+export const updateBrand = async (id: string, updates: Partial<BrandDb>) => {
+  if (!isSupabaseConfigured()) {
+    return { data: null, error: { message: 'Supabase未設定' } }
+  }
+
+  const { data, error } = await supabase!
+    .from('brands')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+export const deleteBrand = async (id: string) => {
+  if (!isSupabaseConfigured()) {
+    return { error: { message: 'Supabase未設定' } }
+  }
+
+  const { error } = await supabase!
+    .from('brands')
+    .delete()
+    .eq('id', id)
+
+  return { error }
+}
+
 // Health check
 export const checkSupabaseConnection = async () => {
   try {
@@ -1432,4 +1844,102 @@ export const checkSupabaseConnection = async () => {
   } catch (error) {
     return { connected: false, error }
   }
+}
+
+// Vendor Purchases
+export const getVendorPurchasesForDate = async (storeId: string, date: string) => {
+  if (!isSupabaseConfigured()) {
+    console.log('🔧 getVendorPurchasesForDate: Supabase未設定、空データを返却')
+    return { data: [], error: null }
+  }
+
+  const { data: { user } } = await supabase!.auth.getUser()
+  if (!user) {
+    console.error('❌ getVendorPurchasesForDate: ユーザーが認証されていません')
+    return { data: [], error: { message: 'ユーザーが認証されていません' } }
+  }
+
+  const orgId = await getCurrentUserOrganizationId(user.id)
+  if (!orgId) {
+    console.error('❌ getVendorPurchasesForDate: 組織IDが取得できません')
+    return { data: [], error: { message: '組織IDが取得できません' } }
+  }
+
+  let query = supabase!
+    .from('daily_report_vendor_purchases')
+    .select(`
+      id,
+      daily_report_id,
+      vendor_id,
+      amount,
+      created_at,
+      daily_reports!inner(id, date, store_id, organization_id),
+      vendors!inner(id, name, category)
+    `)
+    .eq('daily_reports.organization_id', orgId)
+    .eq('daily_reports.date', date)
+
+  if (storeId !== 'all') {
+    query = query.eq('daily_reports.store_id', storeId)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error('❌ getVendorPurchasesForDate: エラー', error)
+    return { data: [], error }
+  }
+
+  return { data, error: null }
+}
+
+export const getVendorPurchasesForPeriod = async (
+  storeId: string,
+  startDate: string,
+  endDate: string
+) => {
+  if (!isSupabaseConfigured()) {
+    console.log('🔧 getVendorPurchasesForPeriod: Supabase未設定、空データを返却')
+    return { data: [], error: null }
+  }
+
+  const { data: { user } } = await supabase!.auth.getUser()
+  if (!user) {
+    console.error('❌ getVendorPurchasesForPeriod: ユーザーが認証されていません')
+    return { data: [], error: { message: 'ユーザーが認証されていません' } }
+  }
+
+  const orgId = await getCurrentUserOrganizationId(user.id)
+  if (!orgId) {
+    console.error('❌ getVendorPurchasesForPeriod: 組織IDが取得できません')
+    return { data: [], error: { message: '組織IDが取得できません' } }
+  }
+
+  let query = supabase!
+    .from('daily_report_vendor_purchases')
+    .select(`
+      id,
+      daily_report_id,
+      vendor_id,
+      amount,
+      created_at,
+      daily_reports!inner(id, date, store_id, organization_id),
+      vendors!inner(id, name, category)
+    `)
+    .eq('daily_reports.organization_id', orgId)
+    .gte('daily_reports.date', startDate)
+    .lte('daily_reports.date', endDate)
+
+  if (storeId !== 'all') {
+    query = query.eq('daily_reports.store_id', storeId)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error('❌ getVendorPurchasesForPeriod: エラー', error)
+    return { data: [], error }
+  }
+
+  return { data, error: null }
 }
