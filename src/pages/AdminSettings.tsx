@@ -27,7 +27,7 @@ const RealtimeErrorMonitor = lazy(() => import('@/components/Admin/RealtimeError
 const DataExport = lazy(() => import('@/components/Data/DataExport').then(m => ({ default: m.DataExport })))
 const StoreHolidayManagement = lazy(() => import('@/components/Stores/StoreHolidayManagement').then(m => ({ default: m.StoreHolidayManagement })))
 const AdminActivityLogViewer = lazy(() => import('@/components/Admin/AdminActivityLogViewer').then(m => ({ default: m.AdminActivityLogViewer })))
-const SystemHealthDashboard = lazy(() => import('@/components/System/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
+const SystemHealthDashboard = lazy(() => import('@/components/system/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
 const DemoDataManagement = lazy(() => import('@/components/Admin/DemoDataManagement').then(m => ({ default: m.DemoDataManagement })))
 const VendorAssignmentManager = lazy(() => import('@/components/Admin/VendorAssignmentManager').then(m => ({ default: m.VendorAssignmentManager })))
 const InlineVendorCategoryManager = lazy(() => import('@/components/Admin/InlineVendorCategoryManager').then(m => ({ default: m.InlineVendorCategoryManager })))
