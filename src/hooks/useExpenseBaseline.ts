@@ -108,9 +108,11 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
           let totalOpenDays = 0
           let storeCount = 0
 
-          baselineResults.forEach(result => {
+          baselineResults.forEach((result) => {
             if (result.data) {
-              totalLaborCost += (result.data.labor_cost_employee || 0) + (result.data.labor_cost_part_time || 0)
+              const baselineOpenDays = result.data.open_days || 30
+              const baseLaborCost = (result.data.labor_cost_employee || 0) + (result.data.labor_cost_part_time || 0)
+              totalLaborCost += baseLaborCost
               totalUtilities += result.data.utilities || 0
               totalRent += result.data.rent || 0
               totalConsumables += result.data.consumables || 0
@@ -119,12 +121,11 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
               totalMisc += result.data.misc || 0
               totalCommunication += result.data.communication || 0
               totalOthers += result.data.others || 0
-              totalOpenDays += result.data.open_days || 0
+              totalOpenDays += baselineOpenDays
               storeCount++
             }
           })
 
-          // Calculate average days per store
           const avgOpenDays = storeCount > 0 ? Math.round(totalOpenDays / storeCount) : 1
           const perDay = (value: number) => Math.round(value / Math.max(avgOpenDays, 1))
 
@@ -274,15 +275,15 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
           return
         }
 
-        // 月の日数を計算
+        // 参考経費設定時の基準営業日数を使用（休日設定の影響を受けない）
         const [year, month] = yyyymm.split('-').map(Number)
         const daysInMonth = new Date(year, month, 0).getDate()
-        const openDays = data?.open_days || daysInMonth
+        const baselineOpenDays = data?.open_days || daysInMonth
 
-        // 日割り計算関数
-        const perDay = (value?: number) => Math.round((value || 0) / Math.max(openDays, 1))
+        // 日割り計算関数（基準営業日数ベース）
+        const perDay = (value?: number) => Math.round((value || 0) / Math.max(baselineOpenDays, 1))
 
-        // 日割り経費を計算
+        // 日割り経費を計算（基準営業日数で割る = 参考経費画面と同じ日額）
         const laborCost = perDay((data?.labor_cost_employee || 0) + (data?.labor_cost_part_time || 0))
         const utilities = perDay(data?.utilities)
         const rent = perDay(data?.rent)
@@ -310,8 +311,9 @@ export const useExpenseBaseline = (storeId?: string, yyyymm?: string) => {
           totalExpense
         })
 
-        // 月次合計を計算
+        // 月次合計を計算（参考経費設定の月額をそのまま使用）
         const monthlyLaborCost = (data?.labor_cost_employee || 0) + (data?.labor_cost_part_time || 0)
+
         const monthlyUtilities = data?.utilities || 0
         const monthlyRent = data?.rent || 0
         const monthlyConsumables = data?.consumables || 0

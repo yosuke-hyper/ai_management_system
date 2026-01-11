@@ -92,6 +92,8 @@ export const ReportForm: React.FC = () => {
     dinnerCustomers: 0,
     reportText: ''
   })
+  const [tempLunchData, setTempLunchData] = useState<Partial<FormState> | null>(null)
+  const [tempDinnerData, setTempDinnerData] = useState<Partial<FormState> | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<null | 'local' | 'sent'>(null)
   const [laborManagedMonthly, setLaborManagedMonthly] = useState(true)
@@ -269,29 +271,37 @@ export const ReportForm: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.storeId, form.operationType, isEditMode])
 
-  // 営業時間帯切り替え時に入力データをクリア
+  // 営業時間帯切り替え時にデータを一時保存して切り替え
   const handleOperationTypeChange = (newOperationType: OperationType) => {
-    // 未保存データがあるか確認
-    const hasData =
-      form.salesCash10 > 0 || form.salesCash8 > 0 ||
-      form.salesCredit10 > 0 || form.salesCredit8 > 0 ||
-      Object.values(form.vendorPurchases).some(v => v > 0) ||
-      form.laborCost > 0 ||
-      form.customers > 0 || form.reportText.trim() !== ''
-
-    if (hasData && !isEditMode) {
-      const confirmed = window.confirm(
-        `${form.operationType === 'lunch' ? 'ランチ' : 'ディナー'}の入力データがあります。\n${newOperationType === 'lunch' ? 'ランチ' : 'ディナー'}に切り替えると、入力データがクリアされます。\nよろしいですか？`
-      )
-      if (!confirmed) {
-        return
-      }
+    if (isEditMode) {
+      return
     }
 
-    // 営業時間帯を切り替えて入力フィールドをリセット
-    setForm(f => ({
-      ...f,
-      operationType: newOperationType,
+    // 現在の営業時間帯のデータを一時保存
+    const currentData = {
+      salesCash10: form.salesCash10,
+      salesCash8: form.salesCash8,
+      salesCredit10: form.salesCredit10,
+      salesCredit8: form.salesCredit8,
+      sales: form.sales,
+      vendorPurchases: form.vendorPurchases,
+      purchase: form.purchase,
+      laborCost: form.laborCost,
+      customers: form.customers,
+      lunchCustomers: form.lunchCustomers,
+      dinnerCustomers: form.dinnerCustomers,
+      reportText: form.reportText
+    }
+
+    // 現在の営業時間帯に応じて一時保存
+    if (form.operationType === 'lunch') {
+      setTempLunchData(currentData)
+    } else if (form.operationType === 'dinner') {
+      setTempDinnerData(currentData)
+    }
+
+    // 切り替え先のデータを復元
+    let restoredData: Partial<FormState> = {
       salesCash10: 0,
       salesCash8: 0,
       salesCredit10: 0,
@@ -304,6 +314,19 @@ export const ReportForm: React.FC = () => {
       lunchCustomers: 0,
       dinnerCustomers: 0,
       reportText: ''
+    }
+
+    if (newOperationType === 'lunch' && tempLunchData) {
+      restoredData = tempLunchData
+    } else if (newOperationType === 'dinner' && tempDinnerData) {
+      restoredData = tempDinnerData
+    }
+
+    // 営業時間帯を切り替えてデータを復元
+    setForm(f => ({
+      ...f,
+      operationType: newOperationType,
+      ...restoredData
     }))
 
     // 保存済みフラグをクリア
@@ -732,6 +755,15 @@ export const ReportForm: React.FC = () => {
 
         setSaved('sent')
 
+        // 保存成功後に一時保存データをクリア（新規作成時のみ）
+        if (!isEditMode) {
+          if (form.operationType === 'lunch') {
+            setTempLunchData(null)
+          } else if (form.operationType === 'dinner') {
+            setTempDinnerData(null)
+          }
+        }
+
         // 異常検知を実行（新規作成時のみ、バックグラウンドで非同期実行）
         if (!isEditMode) {
           // 非同期で実行（ユーザーを待たせない）
@@ -846,8 +878,9 @@ export const ReportForm: React.FC = () => {
     let accessibleStores = getAccessibleStores()
 
     // もし accessibleStores が空で、AdminDataContext に stores がある場合はそれを使う
-    if (accessibleStores.length === 0 && user?.role === 'admin' && adminStores.length > 0) {
-      accessibleStores = adminStores.map(s => ({ id: s.id, name: s.name }))
+    // owner/admin は全店舗にアクセス可能なので、adminStoresからフォールバック
+    if (accessibleStores.length === 0 && (user?.role === 'admin' || user?.role === 'owner') && adminStores.length > 0) {
+      accessibleStores = adminStores.filter(s => s.isActive !== false).map(s => ({ id: s.id, name: s.name }))
     }
 
     return accessibleStores.map(store => ({
@@ -918,21 +951,36 @@ export const ReportForm: React.FC = () => {
             <label className="block text-xs text-muted-foreground mb-2">営業時間帯</label>
 
             {/* 既存日報の状況表示 */}
-            {!isEditMode && (existingReportsToday.lunch || existingReportsToday.dinner) && (
+            {!isEditMode && (existingReportsToday.lunch || existingReportsToday.dinner || tempLunchData || tempDinnerData) && (
               <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-xs font-medium text-blue-800 mb-1">本日の入力状況</p>
-                <div className="flex gap-2 text-xs">
+                <div className="flex flex-wrap gap-2 text-xs">
                   {existingReportsToday.lunch && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-800 rounded">
-                      🌤️ ランチ入力済み
+                      ✅ ランチ保存済み
+                    </span>
+                  )}
+                  {!existingReportsToday.lunch && tempLunchData && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 rounded border border-amber-300">
+                      📝 ランチ入力中
                     </span>
                   )}
                   {existingReportsToday.dinner && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-100 text-indigo-800 rounded">
-                      🌙 ディナー入力済み
+                      ✅ ディナー保存済み
+                    </span>
+                  )}
+                  {!existingReportsToday.dinner && tempDinnerData && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded border border-indigo-300">
+                      📝 ディナー入力中
                     </span>
                   )}
                 </div>
+                {(tempLunchData || tempDinnerData) && (
+                  <p className="text-xs text-blue-700 mt-2">
+                    💡 入力データは一時保存されています。保存ボタンを押してデータベースに保存してください。
+                  </p>
+                )}
               </div>
             )}
 
@@ -956,6 +1004,11 @@ export const ReportForm: React.FC = () => {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                   </span>
                 )}
+                {!isEditMode && !existingReportsToday.lunch && tempLunchData && (
+                  <span className="absolute top-1 right-1 flex h-2 w-2">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -976,15 +1029,20 @@ export const ReportForm: React.FC = () => {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                   </span>
                 )}
+                {!isEditMode && !existingReportsToday.dinner && tempDinnerData && (
+                  <span className="absolute top-1 right-1 flex h-2 w-2">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                  </span>
+                )}
               </button>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
               {form.operationType === 'lunch' && 'ランチ営業時間帯の売上・経費を入力してください'}
               {form.operationType === 'dinner' && 'ディナー営業時間帯の売上・経費を入力してください'}
               {isEditMode && ' (編集モードでは営業時間帯は変更できません)'}
-              {!isEditMode && !existingReportsToday.lunch && !existingReportsToday.dinner && (
+              {!isEditMode && (
                 <span className="block mt-1 text-blue-600">
-                  💡 ランチとディナーは別々に入力できます。それぞれの売上が合計に加算されます。
+                  💡 ランチとディナーを切り替えても入力データは保持されます。それぞれ保存ボタンで保存してください。
                 </span>
               )}
             </p>

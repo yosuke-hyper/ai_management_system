@@ -26,7 +26,7 @@ interface Notification {
 }
 
 export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpdate }) => {
-  const { user } = useAuth();
+  const { user, refreshStores } = useAuth();
   const { organization } = useOrganization();
   const location = useLocation();
   const { getBrandById } = useBrands();
@@ -187,15 +187,17 @@ export const StoreManager: React.FC<StoreManagerProps> = ({ userId, onStoresUpda
       const message = storeData.brandId
         ? '店舗を作成し、業態を登録しました'
         : '店舗を作成しました';
-      // 業態登録時は通知を長めに表示
       showNotification('success', message, storeData.brandId ? 5000 : 4000);
+
+       // AuthContextの店舗データを更新（ReportFormなど他画面での表示に必要）
+       await refreshStores();
 
        // ダッシュボード側の店舗データを更新
        if (onStoresUpdate) {
          console.log('🔄 StoreManager: ダッシュボード側店舗データ更新を通知');
          setTimeout(() => {
            onStoresUpdate();
-         }, 500); // 少し遅延させてデータ同期を確実に
+         }, 500);
        }
 
       return {};

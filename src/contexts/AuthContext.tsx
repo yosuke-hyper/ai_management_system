@@ -38,6 +38,7 @@ type Ctx = {
   signUp: (email: string, password: string, name: string, role: Role, organizationName?: string, storeCount?: number) => Promise<{ data: any; error: null | { message: string } }>
   signOut: () => Promise<{ error: unknown | null }>
   refreshUser: () => Promise<void>
+  refreshStores: () => Promise<void>
   enterDemoMode: () => void
   exitDemoMode: () => void
   hasPermission: (role: Role) => boolean
@@ -524,6 +525,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAllStores([])  // Clear demo stores
   }, [])
 
+  const refreshStores = useCallback(async () => {
+    if (!user?.organizationId) {
+      console.log('⚠️ refreshStores: No organizationId available')
+      return
+    }
+
+    try {
+      console.log('🔄 refreshStores: Refreshing stores for organization:', user.organizationId)
+      const { data: stores } = await supabase
+        .from('stores')
+        .select('id, name, brand_id')
+        .eq('organization_id', user.organizationId)
+        .eq('is_active', true)
+        .order('name')
+
+      if (stores && stores.length > 0) {
+        const storesWithBrand = stores.map(s => ({
+          id: s.id,
+          name: s.name,
+          brandId: s.brand_id
+        }))
+        console.log('✅ refreshStores: Stores refreshed:', storesWithBrand.length)
+        setAllStores(storesWithBrand)
+      } else {
+        console.log('⚠️ refreshStores: No stores found')
+        setAllStores([])
+      }
+    } catch (error) {
+      console.error('❌ refreshStores: Error:', error)
+    }
+  }, [user?.organizationId])
 
   const hasPermission = useCallback((req: Role) => {
     if (!user) return false
@@ -565,13 +597,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAuthenticated: !!user,
     isSupabaseMode: isSupabaseReady(),
     isDemoMode,
-    signIn, signUp, signOut, refreshUser,
+    signIn, signUp, signOut, refreshUser, refreshStores,
     enterDemoMode, exitDemoMode,
     hasPermission,
     canAccessStore,
     getAccessibleStores,
     allStores,
-  }), [user, loading, isInitialized, allStores, isDemoMode, signIn, signUp, signOut, refreshUser, enterDemoMode, exitDemoMode, hasPermission, canAccessStore, getAccessibleStores])
+  }), [user, loading, isInitialized, allStores, isDemoMode, signIn, signUp, signOut, refreshUser, refreshStores, enterDemoMode, exitDemoMode, hasPermission, canAccessStore, getAccessibleStores])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

@@ -1,15 +1,66 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.39.3';
+import nodemailer from 'npm:nodemailer@6.9.7';
 
 interface EmailRequest {
   reportId: string;
   recipientEmail: string;
 }
 
+const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') || '*';
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
+
+async function sendEmail(to: string, subject: string, html: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const smtpHost = Deno.env.get('SMTP_HOST');
+    const smtpPort = parseInt(Deno.env.get('SMTP_PORT') || '587');
+    const smtpUser = Deno.env.get('SMTP_USER');
+    const smtpPassword = Deno.env.get('SMTP_PASSWORD');
+    const smtpFromEmail = Deno.env.get('SMTP_FROM_EMAIL');
+    const smtpFromName = Deno.env.get('SMTP_FROM_NAME') || 'FoodValue AI';
+
+    if (!smtpHost || !smtpUser || !smtpPassword || !smtpFromEmail) {
+      throw new Error('SMTP configuration is incomplete. Please set all required environment variables.');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: false,
+      auth: {
+        user: smtpUser,
+        pass: smtpPassword,
+      },
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+
+    const mailOptions = {
+      from: `${smtpFromName} <${smtpFromEmail}>`,
+      to: to,
+      subject: subject,
+      html: html,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+
+    return {
+      success: true,
+      messageId: info.messageId,
+    };
+  } catch (error) {
+    console.error('SMTP送信エラー:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'メール送信中にエラーが発生しました',
+    };
+  }
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -22,8 +73,6 @@ Deno.serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const resendApiKey = Deno.env.get('RESEND_API_KEY');
-    const isDemoMode = !resendApiKey;
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -88,7 +137,7 @@ Deno.serve(async (req: Request) => {
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; }
+    .header { background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; }
     .header h1 { margin: 0; font-size: 24px; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
     .section { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -172,6 +221,7 @@ Deno.serve(async (req: Request) => {
       <div class="footer">
         <p>このレポートは AI によって自動生成されました。<br>
         詳細は管理システムでご確認ください。</p>
+        <p style="margin-top: 15px;"><strong>FoodValue AI Management System</strong></p>
       </div>
     </div>
   </div>
@@ -179,47 +229,14 @@ Deno.serve(async (req: Request) => {
 </html>
     `;
 
-    if (isDemoMode) {
-      console.log(`[DEMO MODE] メール送信をシミュレート`);
-      console.log(`To: ${recipientEmail}`);
-      console.log(`Subject: ${report.title} - ${storeName}`);
-      console.log(`Report ID: ${reportId}`);
+    const result = await sendEmail(recipientEmail, `${report.title} - ${storeName}`, emailHtml);
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          messageId: `demo-${Date.now()}`,
-          isDemoMode: true,
-          message: 'デモモード: メールは送信されませんでしたが、レポートの準備が完了しました'
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (!result.success) {
+      throw new Error(result.error || 'メール送信に失敗しました');
     }
-
-    const resendResponse = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: 'レポート配信 <reports@updates.yourdomain.com>',
-        to: [recipientEmail],
-        subject: `${report.title} - ${storeName}`,
-        html: emailHtml,
-      }),
-    });
-
-    if (!resendResponse.ok) {
-      const errorData = await resendResponse.json();
-      console.error('Resend API error:', errorData);
-      throw new Error('メール送信に失敗しました');
-    }
-
-    const result = await resendResponse.json();
 
     return new Response(
-      JSON.stringify({ success: true, messageId: result.id, isDemoMode: false }),
+      JSON.stringify({ success: true, messageId: result.messageId }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {

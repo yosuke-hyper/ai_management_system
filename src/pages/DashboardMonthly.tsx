@@ -271,8 +271,9 @@ export const DashboardMonthly: React.FC = () => {
 
     // 参考経費から日数分の経費を計算（人件費を除外）
     if (expenseBaseline && expenseBaseline.sumOther > 0) {
-      // sumOtherには人件費が含まれていないことを確認
-      return expenseBaseline.sumOther * thisMonthReports.length
+      // ユニークな日数でカウント（同じ日にランチ・ディナー複数入力されていても1日としてカウント）
+      const uniqueDates = new Set(thisMonthReports.map(r => r.date))
+      return expenseBaseline.sumOther * uniqueDates.size
     }
 
     return 0
@@ -280,16 +281,17 @@ export const DashboardMonthly: React.FC = () => {
 
   // 月次の人件費と営業利益を再計算
   const adjustedThisMonthKpis = useMemo(() => {
-    // 参考経費から日数に応じた月の想定人件費を計算
-    const daysInMonth = thisMonthReports.length
-    const monthlyLaborCostFromBaseline = monthlyExpenseBaseline.laborCost > 0
-      ? (monthlyExpenseBaseline.laborCost / 30) * daysInMonth
-      : 0
+    // monthlyExpenseBaseline.laborCostは既に休日設定に基づいて営業日数で按分済み
+    // 日報があるユニークな日数を計算（同じ日にランチ・ディナー複数入力されていても1日としてカウント）
+    const uniqueDates = new Set(thisMonthReports.map(r => r.date))
+    const daysWithReports = uniqueDates.size
+    const dailyLaborCost = expenseBaseline.laborCost || 0
+    const monthlyLaborCostFromBaseline = dailyLaborCost * daysWithReports
 
     // 実際の人件費（日報入力値）
     const actualLaborCost = thisMonthKpis.laborTotal
 
-    // どちらか大きい方を使用（または参考経費がない場合は実際の値）
+    // 参考経費がある場合はそれを使用、なければ実際の値
     const adjustedLaborCost = monthlyLaborCostFromBaseline > 0
       ? monthlyLaborCostFromBaseline
       : actualLaborCost
@@ -312,7 +314,7 @@ export const DashboardMonthly: React.FC = () => {
       operatingProfit,
       profitMargin
     }
-  }, [thisMonthKpis, thisMonthOtherExpenses, monthlyExpenseBaseline, thisMonthReports])
+  }, [thisMonthKpis, thisMonthOtherExpenses, expenseBaseline, thisMonthReports])
 
   // 期間合算用のその他経費を計算
   const rangeOtherExpenses = useMemo(() => {

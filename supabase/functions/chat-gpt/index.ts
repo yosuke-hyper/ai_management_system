@@ -1,23 +1,190 @@
-import { createClient } from 'npm:@supabase/supabase-js@2.39.3';
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.39.3";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, apikey, x-client-info, authorization",
+};
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
-interface OpenAIRequest {
-  model: string;
-  messages: ChatMessage[];
-  max_tokens?: number;
-  temperature?: number;
-  stream?: boolean;
+interface RecentReport {
+  date: string;
+  storeName: string;
+  sales: number;
+  costRate: number;
+  laborCostRate: number;
+  profit: number;
+  customers?: number;
 }
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+interface BusinessData {
+  storeName?: string;
+  reportCount?: number;
+  allStoresCount?: number;
+  totalSales?: number;
+  avgCostRate?: number;
+  avgLaborCostRate?: number;
+  avgProfit?: number;
+  avgProfitRate?: number;
+  thisMonthSales?: number;
+  thisMonthAvgCostRate?: number;
+  thisMonthAvgLaborCostRate?: number;
+  thisMonthAvgProfit?: number;
+  thisMonthAvgProfitRate?: number;
+  thisMonthReportCount?: number;
+  lastMonthSales?: number;
+  lastMonthAvgCostRate?: number;
+  lastMonthAvgLaborCostRate?: number;
+  lastMonthAvgProfit?: number;
+  lastMonthAvgProfitRate?: number;
+  lastMonthReportCount?: number;
+  recentReports?: RecentReport[];
+  stores?: string[];
+}
+
+function buildSystemPrompt(businessData: BusinessData, aiName: string, aiPersonality: string): string {
+  const personalityTraits: Record<string, string> = {
+    friendly: '親しみやすく、元気づけるような口調で話してください。「～ですね！」「～しましょう！」など明るい言葉を使います。',
+    professional: '丁寧で専門的な口調で話してください。データに基づいた具体的な提案を重視します。',
+    casual: 'カジュアルでフレンドリーな口調で話してください。「～だよね！」「～じゃない？」など。',
+    mentor: '経験豊富なメンターのように、経営者の立場に立ってアドバイスしてください。'
+  };
+
+  const personality = personalityTraits[aiPersonality] || personalityTraits.friendly;
+
+  let dataContext = '';
+  
+  if (businessData.thisMonthSales !== undefined && businessData.thisMonthSales > 0) {
+    dataContext += `\n\n## 今月の実績（${businessData.thisMonthReportCount || 0}件のレポート）`;
+    dataContext += `\n- 売上合計: ${Math.round(businessData.thisMonthSales).toLocaleString()}円`;
+    if (businessData.thisMonthAvgCostRate) dataContext += `\n- 平均原価率: ${businessData.thisMonthAvgCostRate.toFixed(1)}%`;
+    if (businessData.thisMonthAvgLaborCostRate) dataContext += `\n- 平均人件費率: ${businessData.thisMonthAvgLaborCostRate.toFixed(1)}%`;
+    if (businessData.thisMonthAvgProfit) dataContext += `\n- 平均日次営業利益: ${Math.round(businessData.thisMonthAvgProfit).toLocaleString()}円`;
+    if (businessData.thisMonthAvgProfitRate) dataContext += `\n- 平均営業利益率: ${businessData.thisMonthAvgProfitRate.toFixed(1)}%`;
+  }
+
+  if (businessData.lastMonthSales !== undefined && businessData.lastMonthSales > 0) {
+    dataContext += `\n\n## 先月の実績（${businessData.lastMonthReportCount || 0}件のレポート）`;
+    dataContext += `\n- 売上合計: ${Math.round(businessData.lastMonthSales).toLocaleString()}円`;
+    if (businessData.lastMonthAvgCostRate) dataContext += `\n- 平均原価率: ${businessData.lastMonthAvgCostRate.toFixed(1)}%`;
+    if (businessData.lastMonthAvgLaborCostRate) dataContext += `\n- 平均人件費率: ${businessData.lastMonthAvgLaborCostRate.toFixed(1)}%`;
+    if (businessData.lastMonthAvgProfit) dataContext += `\n- 平均日次営業利益: ${Math.round(businessData.lastMonthAvgProfit).toLocaleString()}円`;
+    if (businessData.lastMonthAvgProfitRate) dataContext += `\n- 平均営業利益率: ${businessData.lastMonthAvgProfitRate.toFixed(1)}%`;
+    
+    if (businessData.thisMonthSales && businessData.thisMonthSales > 0) {
+      const salesDiff = ((businessData.thisMonthSales - businessData.lastMonthSales) / businessData.lastMonthSales * 100);
+      dataContext += `\n- 前月比: ${salesDiff >= 0 ? '+' : ''}${salesDiff.toFixed(1)}%`;
+    }
+  }
+
+  if (businessData.totalSales !== undefined && businessData.totalSales > 0) {
+    dataContext += `\n\n## 全期間の平均データ（${businessData.reportCount || 0}件のレポート）`;
+    dataContext += `\n- 総売上: ${Math.round(businessData.totalSales).toLocaleString()}円`;
+    if (businessData.avgCostRate) dataContext += `\n- 平均原価率: ${businessData.avgCostRate.toFixed(1)}%`;
+    if (businessData.avgLaborCostRate) dataContext += `\n- 平均人件費率: ${businessData.avgLaborCostRate.toFixed(1)}%`;
+    if (businessData.avgProfit) dataContext += `\n- 平均日次営業利益: ${Math.round(businessData.avgProfit).toLocaleString()}円`;
+    if (businessData.avgProfitRate) dataContext += `\n- 平均営業利益率: ${businessData.avgProfitRate.toFixed(1)}%`;
+  }
+
+  if (businessData.recentReports && businessData.recentReports.length > 0) {
+    dataContext += `\n\n## 直近のレポート（最新${Math.min(businessData.recentReports.length, 7)}件）`;
+    businessData.recentReports.slice(0, 7).forEach(report => {
+      const profitRate = report.sales > 0 ? (report.profit / report.sales * 100).toFixed(1) : '0';
+      dataContext += `\n- ${report.date}${report.storeName ? ` (${report.storeName})` : ''}: 売上${Math.round(report.sales).toLocaleString()}円, 原価率${report.costRate.toFixed(1)}%, 人件費率${report.laborCostRate.toFixed(1)}%, 利益${Math.round(report.profit).toLocaleString()}円(${profitRate}%)`;
+    });
+  }
+
+  if (businessData.stores && businessData.stores.length > 1) {
+    dataContext += `\n\n## 管理店舗`;
+    dataContext += `\n${businessData.stores.join(', ')}`;
+  }
+
+  const industryBenchmarks = `
+## 飲食店業界の目安
+- 原価率: 28-32%（理想は30%以下）
+- 人件費率: 25-30%（理想は28%以下）
+- FLコスト（原価+人件費）: 55-60%（理想は60%以下）
+- 営業利益率: 10-15%（理想は10%以上）`;
+
+  return `あなたは飲食店向けAI経営アシスタント「${aiName}」です。
+
+## 役割
+- 飲食店の経営データを分析し、具体的な数値を使ったアドバイスを提供する
+- 売上、原価率、人件費、利益などのKPIについて分析・説明する
+- 業界の目安と比較して、具体的な改善提案を行う
+- 先月との比較、トレンド分析を行う
+
+## 性格
+${personality}
+
+## 店舗情報
+- 店舗: ${businessData.storeName || '未設定'}
+- 管理店舗数: ${businessData.allStoresCount || 1}店舗
+- レポート総数: ${businessData.reportCount || 0}件
+${dataContext}
+${industryBenchmarks}
+
+## 回答のルール
+1. **必ず具体的な数値を使って回答する**（「売上はXXX円です」など）
+2. 業界の目安と比較して評価する（「原価率XX%は業界平均よりやや高めです」など）
+3. 問題点を指摘するだけでなく、**具体的な改善策を3つ以上提案**する
+4. 先月との比較ができる場合は必ず言及する
+5. 300-500文字程度で具体的かつ実用的にまとめる
+6. データがない場合は、まずレポート入力の重要性を説明し、入力を促す
+7. 店長やオーナーに対して話しかけるように回答する
+8. 質問の意図を汲み取り、その背景にある課題にも言及する`;
+}
+
+async function callOpenAI(messages: ChatMessage[], businessData: BusinessData, aiName: string, aiPersonality: string): Promise<{ response: string; debug?: string }> {
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+  if (!openaiApiKey) {
+    return { response: '', debug: 'OPENAI_API_KEY is not set in environment' };
+  }
+
+  const systemPrompt = buildSystemPrompt(businessData, aiName, aiPersonality);
+
+  const apiMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+  ];
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: apiMessages,
+        temperature: 0.7,
+        max_tokens: 1000
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { response: '', debug: `OpenAI API error: ${response.status} - ${errorText}` };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    
+    if (!content) {
+      return { response: '', debug: `Empty response from OpenAI: ${JSON.stringify(data)}` };
+    }
+
+    return { response: content };
+  } catch (error) {
+    return { response: '', debug: `Fetch error: ${String(error)}` };
+  }
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -28,231 +195,144 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // JWT認証チェック
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: '認証が必要です。ログインしてください。'
-        }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        JSON.stringify({ success: false, error: '認証が必要です。' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Supabase設定がありません', debug: { hasUrl: !!supabaseUrl, hasKey: !!supabaseServiceKey } }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
 
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
     if (userError || !user) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: '認証に失敗しました。再度ログインしてください。'
-        }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        JSON.stringify({ success: false, error: '認証に失敗しました。', debug: userError?.message }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // AI使用回数チェック
-    const { data: usageCheck, error: usageError } = await supabase.rpc('check_and_increment_usage', {
-      p_user_id: user.id
-    });
+    const body = await req.json();
+    const { messages, businessData = {}, storeId } = body;
 
-    console.log('Usage check result:', usageCheck);
-
-    if (usageError) {
-      console.error('Usage check error:', usageError);
-    }
-
-    if (usageCheck && !usageCheck.allowed) {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: `本日の利用上限（${usageCheck.daily_limit}回）に達しました。`,
-          message: `${usageCheck.message}\n\n明日午前0時（日本時間）にリセットされます。\nそれまでは基本的なデータ分析機能をご利用いただけます。`,
-          usageInfo: {
-            currentCount: usageCheck.current_count,
-            dailyLimit: usageCheck.daily_limit,
-            remaining: usageCheck.remaining
-          }
-        }),
-        {
-          status: 429,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        JSON.stringify({ success: false, error: 'メッセージが必要です。' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const { messages, businessData } = await req.json() as {
-      messages: ChatMessage[];
-      businessData?: {
-        totalSales: number;
-        totalExpenses: number;
-        profitMargin: number;
-        reportCount: number;
-        stores: string[];
-        recentEvents?: string[];
-      };
-    };
+    const { data: memberData } = await supabase
+      .from('organization_members')
+      .select('organization_id, store_id, role')
+      .eq('user_id', user.id)
+      .maybeSingle();
 
-    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!memberData) {
+      return new Response(
+        JSON.stringify({ success: false, error: '組織が見つかりません。' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const orgId = memberData.organization_id;
+
+    const { data: orgData } = await supabase
+      .from('organizations')
+      .select('is_demo, ai_partner_name, ai_personality')
+      .eq('id', orgId)
+      .single();
+
+    const isDemoOrg = orgData?.is_demo || false;
+    const aiName = orgData?.ai_partner_name || 'しばちゃん';
+    const aiPersonality = orgData?.ai_personality || 'friendly';
+
+    if (isDemoOrg) {
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          response: `${aiName}です！デモモードではAI応答が制限されています。\n\n本番環境では詳細な分析をお届けできます！` 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const targetStoreId = storeId || memberData.store_id;
     
-    if (!OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'OpenAI API キーが設定されていません。管理者に連絡してください。' 
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    if (targetStoreId) {
+      try {
+        const currentMonth = new Date().toISOString().slice(0, 7) + '-01';
+        const { data: existingLimit } = await supabase
+          .from('ai_usage_limits')
+          .select('*')
+          .eq('organization_id', orgId)
+          .eq('store_id', targetStoreId)
+          .eq('month', currentMonth)
+          .maybeSingle();
+
+        if (existingLimit) {
+          const monthlyLimit = existingLimit.monthly_limit || 100;
+          if ((existingLimit.monthly_usage || 0) >= monthlyLimit) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: `この店舗の月間AI利用上限（${monthlyLimit}回）に達しました。`
+              }),
+              { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+          await supabase
+            .from('ai_usage_limits')
+            .update({ monthly_usage: (existingLimit.monthly_usage || 0) + 1, updated_at: new Date().toISOString() })
+            .eq('id', existingLimit.id);
+        } else {
+          await supabase
+            .from('ai_usage_limits')
+            .insert({ organization_id: orgId, store_id: targetStoreId, month: currentMonth, monthly_usage: 1 });
         }
-      );
-    }
-
-    const systemPrompt = `あなたは居酒屋いっきチェーンの専門AIアナリストです。以下のデータを基に、経営に役立つ具体的で実用的な回答を日本語で提供してください。
-
-現在の業績データ:
-${businessData ? `
-- 総売上: ${(businessData.totalSales || 0).toLocaleString('ja-JP')}円
-- 総経費: ${(businessData.totalExpenses || 0).toLocaleString('ja-JP')}円
-- 利益率: ${(businessData.profitMargin || 0).toFixed(1)}%
-- 報告件数: ${businessData.reportCount || 0}件
-- 店舗数: ${businessData.stores?.length || 0}店舗
-- 店舗名: ${businessData.stores?.join('、') || '未設定'}
-${businessData.recentEvents?.length ? '- 特別実績: ' + businessData.recentEvents.join('、') : ''}
-` : '業績データを取得中...'}
-
-回答の指針:
-1. 具体的な数値を使った分析
-2. 実行可能な改善提案
-3. 飲食業界の一般的な指標との比較
-4. 季節要因や市場環境の考慮
-5. 各店舗の特徴を活かした戦略提案
-
-特に以下の点を重視してください:
-- 原価率: 30-35%が目安
-- 人件費率: 25-30%が目安  
-- 営業利益率: 15-25%が目安
-- 豊洲店の立地特性（豊洲市場、観光エリア）
-- 有明店のオフィス街立地
-- 本店の地域密着型営業
-
-回答は簡潔で分かりやすく、必要に応じて絵文字を使用してください。`;
-
-    const openAIMessages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
-      ...messages.slice(-10)
-    ];
-
-    const openAIRequest: OpenAIRequest = {
-      model: 'gpt-4o-mini',
-      messages: openAIMessages,
-      max_tokens: 1000,
-      temperature: 0.7
-    };
-
-    console.log('OpenAI API Request:', {
-      messageCount: openAIMessages.length,
-      hasBusinessData: !!businessData,
-      lastUserMessage: messages[messages.length - 1]?.content?.substring(0, 100)
-    });
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(openAIRequest)
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('OpenAI API Error:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData
-      });
-      
-      let errorMessage = 'ChatGPT APIでエラーが発生しました。';
-      
-      if (response.status === 401) {
-        errorMessage = 'OpenAI APIキーが無効です。設定を確認してください。';
-      } else if (response.status === 429) {
-        errorMessage = 'API利用制限に達しました。しばらく待ってから再試行してください。';
-      } else if (response.status === 500) {
-        errorMessage = 'OpenAI APIサーバーでエラーが発生しました。';
+      } catch (limitError) {
+        // Continue even if usage tracking fails
       }
-      
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: errorMessage,
-          fallbackResponse: '申し訳ございません。一時的にAI機能が利用できません。基本的な分析は引き続きご利用いただけます。'
-        }),
-        {
-          status: response.status,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
-      );
     }
 
-    const result = await response.json();
-    const aiResponse = result.choices?.[0]?.message?.content;
+    const result = await callOpenAI(messages, businessData, aiName, aiPersonality);
 
-    if (!aiResponse) {
+    if (result.debug) {
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: 'ChatGPTからの応答を取得できませんでした。',
-          fallbackResponse: 'AI機能が一時的に利用できません。手動分析機能をご利用ください。'
+          error: 'AI応答の生成に失敗しました。', 
+          debug: result.debug,
+          hasOpenAIKey: !!Deno.env.get('OPENAI_API_KEY'),
+          keyPrefix: Deno.env.get('OPENAI_API_KEY')?.substring(0, 10) || 'not set'
         }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        response: aiResponse,
-        usage: result.usage,
-        usageInfo: usageCheck ? {
-          currentCount: usageCheck.current_count,
-          dailyLimit: usageCheck.daily_limit,
-          remaining: usageCheck.remaining
-        } : null
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
+      JSON.stringify({ success: true, response: result.response }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-
   } catch (error) {
-    console.error('Edge Function Error:', error);
     return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: 'サーバーエラーが発生しました。',
-        fallbackResponse: 'システムエラーのため、基本的な分析機能のみご利用いただけます。'
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
+      JSON.stringify({ success: false, error: 'エラーが発生しました。', details: String(error) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

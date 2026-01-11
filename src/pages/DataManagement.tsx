@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { Tabs } from '@/components/ui/tabs'
 import { Card } from '@/components/ui/card'
 import { Database, Upload, Download, FileText } from 'lucide-react'
-import { CSVImport } from '@/components/data/CSVImport'
-import { DataExport } from '@/components/data/DataExport'
+import { CSVImport } from '@/components/Data/CSVImport'
+import { DataExport } from '@/components/Data/DataExport'
 
 export const DataManagement: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'import' | 'export'>('import')

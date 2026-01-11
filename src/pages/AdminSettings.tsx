@@ -24,10 +24,10 @@ const BrandManagement = lazy(() => import('@/components/Admin/BrandManagement').
 const ErrorLogViewer = lazy(() => import('@/components/Admin/ErrorLogViewer').then(m => ({ default: m.ErrorLogViewer })))
 const ErrorStatsDashboard = lazy(() => import('@/components/Admin/ErrorStatsDashboard').then(m => ({ default: m.ErrorStatsDashboard })))
 const RealtimeErrorMonitor = lazy(() => import('@/components/Admin/RealtimeErrorMonitor').then(m => ({ default: m.RealtimeErrorMonitor })))
-const DataExport = lazy(() => import('@/components/data/DataExport').then(m => ({ default: m.DataExport })))
+const DataExport = lazy(() => import('@/components/Data/DataExport').then(m => ({ default: m.DataExport })))
 const StoreHolidayManagement = lazy(() => import('@/components/Stores/StoreHolidayManagement').then(m => ({ default: m.StoreHolidayManagement })))
 const AdminActivityLogViewer = lazy(() => import('@/components/Admin/AdminActivityLogViewer').then(m => ({ default: m.AdminActivityLogViewer })))
-const SystemHealthDashboard = lazy(() => import('@/components/system/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
+const SystemHealthDashboard = lazy(() => import('@/components/System/SystemHealthDashboard').then(m => ({ default: m.SystemHealthDashboard })))
 const DemoDataManagement = lazy(() => import('@/components/Admin/DemoDataManagement').then(m => ({ default: m.DemoDataManagement })))
 const VendorAssignmentManager = lazy(() => import('@/components/Admin/VendorAssignmentManager').then(m => ({ default: m.VendorAssignmentManager })))
 const InlineVendorCategoryManager = lazy(() => import('@/components/Admin/InlineVendorCategoryManager').then(m => ({ default: m.InlineVendorCategoryManager })))
@@ -107,6 +107,12 @@ export const AdminSettings: React.FC = () => {
       .order('display_order')
 
     setVendorCategories(categoriesData || [])
+    if (categoriesData && categoriesData.length > 0) {
+      setVendorForm(prev => ({
+        ...prev,
+        category: prev.category === 'others' || !prev.category ? categoriesData[0].id : prev.category
+      }))
+    }
   }
 
   useEffect(() => {
